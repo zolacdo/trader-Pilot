@@ -676,10 +676,17 @@ class PositionManager:
             symbol=order.symbol,
             broker_symbol=position.symbol,
             direction=order.direction,
+            initial_volume=position.volume,
             volume=position.volume,
             open_price=position.price_open,
             current_price=position.price_current or position.price_open,
             stop_loss=order.stop_loss,
+            # Reference de risque de la position, sans laquelle 1 R n'est pas
+            # calculable. Elle manquait : une position nee d'un ordre en
+            # attente n'etait donc jamais mise a break even en mode R_MULTIPLE,
+            # et le trailing ne se resserrait jamais. Constate le 14/09/2026
+            # sur XAUUSDm #3223262501, dont le stop ne pouvait pas remonter.
+            initial_stop_loss=order.stop_loss,
             take_profit=order.take_profit,
             profit=position.profit,
             state=PositionState.OPEN,
