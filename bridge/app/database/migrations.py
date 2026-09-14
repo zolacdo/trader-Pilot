@@ -78,6 +78,62 @@ def _sync_missing_columns(conn: Connection) -> list[str]:
     return applied
 
 
+def _sync_enum_values(conn: Connection) -> list[str]:
+    """Ajoute aux types ENUM PostgreSQL les valeurs apparues cote Python.
+
+    SQLite range les enums dans une colonne texte : une nouvelle valeur y
+    fonctionne immediatement, et les tests ne voient donc rien. PostgreSQL, lui,
+    cree un vrai type ENUM et refuse toute valeur inconnue de lui.
+
+    Constate le 14/09/2026 : l'ajout de ``TrailingMode.ATR_BASED`` passait les
+    1942 tests puis echouait en production sur
+    « valeur en entree invalide pour le enum trailingmode ». La synchronisation
+    est donc faite pour TOUS les types, pas seulement celui-la : le prochain
+    enum ajoute ne doit pas reproduire la meme panne.
+
+    ``ADD VALUE IF NOT EXISTS`` est idempotent et, depuis PostgreSQL 12,
+    autorise dans une transaction tant que la valeur n'y est pas utilisee.
+    """
+    if conn.dialect.name != "postgresql":
+        return []
+
+    added: list[str] = []
+    seen: set[str] = set()
+    for table in SQLModel.metadata.sorted_tables:
+        for column in table.columns:
+            name = getattr(column.type, "name", None)
+            labels = getattr(column.type, "enums", None)
+            if not name or not labels or name in seen:
+                continue
+            seen.add(name)
+            rows = conn.execute(
+                text(
+                    "SELECT e.enumlabel FROM pg_enum e "
+                    "JOIN pg_type t ON t.oid = e.enumtypid WHERE t.typname = :name"
+                ),
+                {"name": name},
+            )
+            existing = {row[0] for row in rows}
+            if not existing:
+                # Le type n'existe pas encore : create_all le creera complet.
+                continue
+            for label in labels:
+                if label in existing:
+                    continue
+                quoted = str(label).replace("'", "''")
+                try:
+                    conn.exec_driver_sql(
+                        f'ALTER TYPE "{name}" ADD VALUE IF NOT EXISTS \'{quoted}\''
+                    )
+                except Exception as exc:
+                    # Une valeur non ajoutee ne doit pas empecher le demarrage :
+                    # elle sera signalee, et seule son utilisation echouera.
+                    logger.warning("Valeur %s.%s non ajoutee : %s", name, label, exc)
+                    continue
+                added.append(f"{name}.{label}")
+    return added
+
+
 def _current_version(conn: Connection) -> int:
     conn.exec_driver_sql(
         "CREATE TABLE IF NOT EXISTS schema_migrations ("
@@ -126,6 +182,10 @@ def _run_sync(conn: Connection) -> None:
     added = _sync_missing_columns(conn)
     if added:
         logger.info("Colonnes ajoutees par migration: %s", ", ".join(added))
+
+    labels = _sync_enum_values(conn)
+    if labels:
+        logger.info("Valeurs d'enum ajoutees par migration: %s", ", ".join(labels))
 
     version = _current_version(conn)
     for target in sorted(MIGRATIONS):

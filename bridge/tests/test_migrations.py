@@ -100,3 +100,50 @@ def test_les_autres_types_restent_inchanges() -> None:
     # Une apostrophe dans la valeur ne doit pas casser la requete.
     assert _render_default(Column("s", String, default="l\'or"), "postgresql") == "\'l\'\'or\'"
     assert _render_default(Column("v", Integer), "postgresql") == "NULL"
+
+
+# ---------------------------------------------------------------------------
+# Valeurs d'enum : le trou que SQLite ne peut pas reveler
+# ---------------------------------------------------------------------------
+async def test_les_valeurs_d_enum_sont_synchronisees_au_demarrage(session) -> None:
+    """La synchronisation doit etre cablee dans le chemin de demarrage.
+
+    SQLite range les enums en texte : une valeur ajoutee cote Python y marche
+    tout de suite. PostgreSQL cree un vrai type ENUM et refuse l'inconnu. Le
+    14/09/2026, l'ajout de TrailingMode.ATR_BASED a passe 1942 tests puis a
+    echoue en production. Aucun test SQLite ne peut reproduire ce refus : on
+    verifie donc que la synchronisation est bien appelee.
+    """
+    source = MIGRATIONS_SOURCE.read_text(encoding="utf-8")
+    arbre = ast.parse(source)
+    corps = next(
+        noeud
+        for noeud in ast.walk(arbre)
+        if isinstance(noeud, ast.FunctionDef) and noeud.name == "_run_sync"
+    )
+    appels = {
+        noeud.func.id
+        for noeud in ast.walk(corps)
+        if isinstance(noeud, ast.Call) and isinstance(noeud.func, ast.Name)
+    }
+    assert "_sync_enum_values" in appels
+
+
+async def test_la_synchronisation_des_enums_ne_touche_pas_sqlite(session) -> None:
+    """Sur SQLite il n'y a pas de type ENUM : la fonction doit s'abstenir."""
+    from app.database.migrations import _sync_enum_values
+
+    engine = get_engine()
+    async with engine.begin() as conn:
+        ajoutees = await conn.run_sync(_sync_enum_values)
+    assert ajoutees == []
+
+
+def test_la_valeur_d_enum_est_echappee_avant_le_sql() -> None:
+    """Un libelle d'enum entre dans du DDL : il doit etre echappe."""
+    source = MIGRATIONS_SOURCE.read_text(encoding="utf-8")
+    debut = source.index("def _sync_enum_values")
+    fin = source.index("def _current_version")
+    corps = source[debut:fin]
+    assert 'replace("\'", "\'\'")' in corps
+    assert "ADD VALUE IF NOT EXISTS" in corps, "l'ajout doit rester idempotent"
