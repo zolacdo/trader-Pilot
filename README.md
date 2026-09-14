@@ -2,8 +2,6 @@
 
 Auteur : **zolacdo** — <zolacdojeff@gmail.com>.
 
-Pour publier le projet sur GitHub, voir [le guide GitHub](docs/GITHUB_SETUP.md).
-
 TradePilot est une passerelle personnelle entre des canaux Telegram de signaux de
 trading et un terminal **MetaTrader 5 Desktop** installé sur un PC Windows.
 
@@ -127,17 +125,34 @@ l'utilisateur ne change pas explicitement de mode.
 
 ## Prérequis
 
-| Élément | Version / détail | Où l'obtenir |
-|---|---|---|
-| Windows | 10 ou 11, 64 bits | — |
-| Python | 3.11 minimum, 64 bits | <https://www.python.org/downloads/windows/> |
-| MetaTrader 5 Desktop | build de votre broker (Exness) | site du broker |
-| Compte Exness **démo** | gratuit | <https://www.exness.com> |
-| Identifiants Telegram | `api_id` + `api_hash` | <https://my.telegram.org> |
-| Clé OpenRouter | clé gratuite | <https://openrouter.ai/keys> |
-| Flutter SDK | 3.x (Dart `>=3.5.0 <4.0.0`) | uniquement pour construire l'APK |
-| Android SDK | API 23 minimum, compilation via Gradle 8.12 | uniquement pour construire l'APK |
-| Compte ngrok | offre gratuite | facultatif, pour l'accès hors du réseau local |
+Le projet se lance en deux parties : le **Bridge sur le PC Windows**, puis
+l'**application sur le téléphone Android**. Il n'y a pas de serveur web à ouvrir
+sur le téléphone et l'application Android ne remplace pas le Bridge.
+
+| Élément | Utilité / version requise |
+|---|---|
+| Windows 10 ou 11, 64 bits | PC qui héberge le Bridge et MetaTrader 5 |
+| PowerShell | exécuter les scripts fournis |
+| Python 3.11 ou plus, **64 bits**, dans le `PATH` | exécuter le Bridge ; cocher « Add python.exe to PATH » à l'installation |
+| Connexion Internet | installer les dépendances et accéder aux services externes |
+| MetaTrader 5 Desktop et compte broker **démo** | lire les marchés et essayer l'exécution MT5 ; le Bridge peut démarrer sans MT5, mais ses fonctions MT5 seront indisponibles |
+| Compte Telegram, `api_id` et `api_hash` | lire les canaux ; obtenir les identifiants sur <https://my.telegram.org> |
+| Clé OpenRouter | activer les fonctions IA ; le parser local fonctionne sans clé |
+| Téléphone Android | installer l'APK et piloter le Bridge |
+| Flutter SDK avec Dart `>=3.5.0 <4.0.0` | construire l'application ; inutile si vous disposez déjà d'un APK compatible |
+| Android Studio / Android SDK, JDK 17 ou plus | compiler l'APK ; installer les composants demandés par `flutter doctor` |
+| Projet Firebase et `google-services.json` | requis pour compiler la configuration Android actuelle |
+| Compte de service Firebase | facultatif, pour recevoir les notifications push même application fermée |
+| Compte et binaire ngrok | facultatif, pour accéder au Bridge en dehors du Wi-Fi local |
+
+Le projet déclare Gradle **8.12**, Android Gradle Plugin **8.9.1** et Kotlin
+**2.1.0** dans `mobile/android/`. Gradle télécharge sa distribution si elle
+n'est pas déjà en cache. Le niveau Android effectif dépend du Flutter installé
+(`flutter.minSdkVersion`, `flutter.compileSdkVersion`, `flutter.targetSdkVersion`).
+
+Python : <https://www.python.org/downloads/windows/>.
+Flutter : <https://docs.flutter.dev/install>.
+Android Studio : <https://developer.android.com/studio>.
 
 Le PC doit rester **allumé, connecté à Internet, avec une session utilisateur
 ouverte** et MetaTrader 5 lancé. Le paquet Python `MetaTrader5` dialogue avec le
@@ -145,93 +160,332 @@ terminal graphique : sans terminal ouvert, aucun ordre ne peut partir.
 
 ---
 
-## Démarrage rapide en 6 étapes
+## Installation et premier démarrage
 
-Toutes les commandes se lancent depuis la racine du dépôt, dans PowerShell :
+Téléchargez ou clonez le projet, puis ouvrez PowerShell **à la racine du projet**,
+dans le dossier contenant `README.md`, `bridge/`, `mobile/` et `scripts/` :
 
 ```powershell
-cd "C:\Users\<votre-nom>\Desktop\trader apk"
+cd "C:\chemin\vers\trader apk"
+python --version
+python -c "import struct; print(struct.calcsize('P') * 8)"
 ```
 
-### 1. Installer le Bridge
+La dernière commande doit afficher `64`. Les étapes ci-dessous indiquent
+explicitement quand changer de dossier. Les commandes avec
+`-ExecutionPolicy Bypass` s'appliquent uniquement au processus PowerShell lancé.
+
+### 1. Installer les dépendances du Bridge
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install_bridge.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install_bridge.ps1
 ```
 
 Le script crée `bridge\.venv`, installe les dépendances, génère `bridge\.env` à
 partir de `.env.example`, génère une `MASTER_KEY` Fernet si elle est vide et
-lance un diagnostic. Il est idempotent.
+lance un diagnostic. Il peut proposer de télécharger ngrok : répondez non
+si vous utilisez seulement le réseau local. Il peut être relancé sans écraser
+la configuration existante.
 
-**Sauvegardez immédiatement `bridge\.env`** : la `MASTER_KEY` chiffre tous vos
-secrets stockés. La perdre oblige à tout reconfigurer.
+**Sauvegardez `bridge\.env` dans un emplacement privé** : la `MASTER_KEY`
+chiffre vos secrets stockés. Conservez cette clé avec la sauvegarde de
+`bridge/data/` ; sans elle, les secrets chiffrés ne pourront pas être relus.
+Ne copiez aucune valeur réelle dans `.env.example`.
 
-Détails complets : [docs/BRIDGE_WINDOWS_SETUP.md](docs/BRIDGE_WINDOWS_SETUP.md).
+### 2. Renseigner la configuration locale
 
-### 2. Connecter MetaTrader 5
-
-Installez MetaTrader 5, ouvrez votre compte **démo** Exness, connectez-vous dans
-le terminal, activez le bouton **AutoTrading** de la barre d'outils et cochez
-*Outils → Options → Expert Advisors → Autoriser le trading algorithmique*.
-
-Puis démarrez le Bridge et vérifiez qu'il détecte le terminal :
+Ouvrez le fichier généré :
 
 ```powershell
-.\scripts\start_bridge.ps1
+notepad .\bridge\.env
 ```
 
-Détails : [docs/MT5_EXNESS_SETUP.md](docs/MT5_EXNESS_SETUP.md).
+| Paramètre | Que renseigner |
+|---|---|
+| `BRIDGE_HOST` | `0.0.0.0` pour un téléphone sur le même Wi-Fi ; `127.0.0.1` pour un accès limité au PC ou via ngrok |
+| `BRIDGE_PORT` | `8787` par défaut |
+| `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_PHONE` | vos identifiants Telegram et numéro au format international ; vous pouvez aussi les saisir dans l'application |
+| `OPENROUTER_API_KEY` | votre clé OpenRouter, ou laissez vide pour la saisir ensuite dans les Paramètres de l'application |
+| `OPENROUTER_FREE_ONLY` | conserver `true` pour limiter la sélection automatique aux modèles gratuits |
+| `MT5_TERMINAL_PATH` | chemin complet de `terminal64.exe` si l'autodétection ne trouve pas le bon terminal |
+| `MT5_LOGIN`, `MT5_PASSWORD`, `MT5_SERVER` | laisser vides si la connexion est faite directement dans MetaTrader 5 |
+| `NGROK_ENABLED` | `false` pour commencer sur le réseau local |
+| `MASTER_KEY` | conserver la valeur générée, ne pas la remplacer à chaque démarrage |
+| `DB_HOST`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD` | laisser vides pour SQLite ; renseigner pour utiliser un serveur PostgreSQL existant |
 
-### 3. Connecter Telegram
+SQLite est le choix par défaut : la base est créée dans
+`bridge/data/tradepilot.sqlite3`, aucune installation de base externe n'est
+nécessaire. PostgreSQL est une option ; voir
+[le guide du Bridge](docs/BRIDGE_WINDOWS_SETUP.md).
 
-Récupérez `api_id` et `api_hash` sur <https://my.telegram.org> et renseignez
-`TELEGRAM_API_ID`, `TELEGRAM_API_HASH` et `TELEGRAM_PHONE` dans `bridge\.env`.
-La connexion elle-même se fait en trois appels : envoi du code, saisie du code,
-puis mot de passe 2FA si votre compte en a un.
+Après toute modification de `.env`, redémarrez le Bridge pour recharger les valeurs.
 
-Détails : [docs/TELEGRAM_SETUP.md](docs/TELEGRAM_SETUP.md).
+### 3. Préparer MetaTrader 5
 
-### 4. Configurer OpenRouter
+Installez MetaTrader 5, ouvrez votre compte **démo** Exness, connectez-vous dans
+le terminal, activez le bouton **Algo Trading / AutoTrading** et cochez
+*Outils → Options → Expert Advisors → Autoriser le trading algorithmique*.
+Vérifiez que le terminal est connecté au broker et que les instruments souhaités
+sont disponibles dans l'Observation du marché. Laissez-le ouvert sur ce PC.
 
-Créez une clé sur <https://openrouter.ai/keys> et renseignez
-`OPENROUTER_API_KEY` dans `bridge\.env`, ou enregistrez-la ensuite via
-`PUT /api/v1/openrouter/key` (elle est alors chiffrée en base). Laissez
-`OPENROUTER_FREE_ONLY=true` : aucun modèle payant ne sera jamais sélectionné
-automatiquement.
+### 4. Lancer le Bridge et vérifier sa réponse
 
-Détails : [docs/OPENROUTER_SETUP.md](docs/OPENROUTER_SETUP.md).
-
-### 5. Appairer le téléphone
-
-Au démarrage, le Bridge affiche une bannière dans la console :
-
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start_bridge.ps1
 ```
-==================================================================
-  TradePilot Bridge 1.0.0 (API v1)
-==================================================================
-  Adresse locale   : http://127.0.0.1:8787
-  Adresse publique : aucune (tunnel desactive)
-  Code d'appairage : XXXX-XXXX   (valable 15 minutes)
+
+Gardez cette console ouverte. Le Bridge y affiche ses journaux, son adresse et
+un **code d'appairage valable 15 minutes et utilisable une seule fois**.
+`Ctrl+C` arrête proprement ce lancement.
+
+Dans une **deuxième console PowerShell** sur le PC, vérifiez l'API :
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8787/api/v1/health
 ```
 
-Dans l'application, saisissez l'adresse du Bridge (par exemple
-`192.168.1.20:8787` sur le réseau local, ou l'URL HTTPS ngrok à distance) puis
-le code. Le Bridge renvoie un **jeton de périphérique** qui authentifie ensuite
-toutes les routes sensibles.
+Une réponse confirme que l'API est accessible. Consultez ensuite les diagnostics
+de l'application pour vérifier séparément MT5, Telegram et OpenRouter.
 
-Détails : [docs/SECURITY.md](docs/SECURITY.md) et
-[docs/ANDROID_SETUP.md](docs/ANDROID_SETUP.md).
+### 5. Préparer Firebase pour Android
 
-### 6. Démarrer en PAPER
+Dans <https://console.firebase.google.com>, créez un projet et ajoutez une
+application Android dont le nom de paquet est **`com.tradepilot.tradepilot`**.
+Téléchargez `google-services.json` et placez-le dans :
+
+```text
+mobile/android/app/google-services.json
+```
+
+Ce fichier est volontairement exclu de Git. La configuration Gradle actuelle
+applique le plugin Google Services : **il faut fournir ce fichier pour compiler
+l'APK**, même si vous n'activez pas les push côté Bridge.
+
+Pour recevoir les notifications application fermée, générez aussi une clé de
+compte de service dans *Paramètres du projet → Comptes de service* et placez-la
+sur le PC dans :
+
+```text
+bridge/data/fcm-service-account.json
+```
+
+Le Bridge la détecte au démarrage. Cette clé privée reste sur le PC : elle ne
+doit être ni versionnée ni intégrée à l'APK. Sans elle, l'inbox et le WebSocket
+restent disponibles, mais les push distants ne fonctionneront pas.
+
+### 6. Compiler et installer l'application Android
+
+Si vous avez déjà un APK compatible, installez-le et passez à l'étape 7.
+Pour compiler depuis les sources, installez Flutter, Android Studio / SDK et
+le JDK, puis, depuis la racine :
+
+```powershell
+flutter doctor -v
+flutter doctor --android-licenses
+cd .\mobile
+flutter pub get
+dart run build_runner build --delete-conflicting-outputs
+flutter analyze
+flutter test
+flutter build apk --release
+```
+
+Corrigez les composants Android manquants signalés par `flutter doctor`.
+`mobile/android/local.properties` doit contenir les chemins de vos SDK ; Flutter
+le génère normalement lors de ses commandes. S'il manque, créez-le avec des
+chemins adaptés à votre machine, par exemple :
+
+```properties
+sdk.dir=C:/Android/Sdk
+flutter.sdk=C:/flutter
+```
+
+L'APK se trouve dans
+**`mobile/build/app/outputs/flutter-apk/app-release.apk`**.
+Copiez-le sur le téléphone, ouvrez-le et autorisez l'installation depuis votre
+gestionnaire de fichiers. Ou, depuis `mobile/`, avec le débogage USB activé :
+
+```powershell
+adb devices
+adb install -r .\build\app\outputs\flutter-apk\app-release.apk
+```
+
+Sans `mobile/android/key.properties`, la release utilise la clé de débogage et
+reste une build de test. Pour conserver une signature personnelle, fournissez
+ce fichier et votre keystore selon [le guide Android](docs/ANDROID_SETUP.md).
+Ils restent exclus du dépôt. Revenez ensuite à la racine :
+
+```powershell
+cd ..
+```
+
+Le script `scripts/build_apk.ps1` permet également de construire l'APK avec
+les informations de build affichées dans l'application.
+
+### 7. Connecter le téléphone au Bridge
+
+Sur le même Wi-Fi, utilisez `BRIDGE_HOST=0.0.0.0` dans `bridge/.env` et
+redémarrez le Bridge. Sur le PC, tapez `ipconfig` et relevez l'adresse IPv4 de
+l'interface Wi-Fi / Ethernet active, par exemple `192.168.1.20`.
+
+Dans l'application TradePilot, saisissez **`http://192.168.1.20:8787`** et le
+code d'appairage affiché dans la console. Remplacez l'adresse par celle du PC.
+`127.0.0.1` sur le téléphone désigne le téléphone lui-même ; `0.0.0.0` est une
+adresse d'écoute et ne doit pas être saisie dans l'application.
+
+Si Windows demande l'accès réseau, autorisez Python sur le **réseau privé**.
+Si nécessaire, autorisez le port TCP `8787` dans le pare-feu pour le réseau
+privé et le sous-réseau local. Le PC et le téléphone doivent pouvoir communiquer
+(certains Wi-Fi invités isolent les appareils). Ne publiez pas ce port HTTP
+directement sur Internet.
+
+Le code a expiré ou a déjà été utilisé ? Depuis une deuxième console à la racine :
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\pairing_code.ps1
+```
+
+Le jeton de périphérique reçu est conservé par l'application et authentifie les
+requêtes suivantes. Autorisez les notifications Android si vous souhaitez les recevoir.
+
+### 8. Connecter Telegram et OpenRouter
+
+Dans les écrans de connexion de l'application, ouvrez Telegram, renseignez
+`api_id`, `api_hash` et le numéro de téléphone, puis saisissez le code reçu via
+Telegram ou SMS. Si votre compte utilise la double authentification, saisissez
+ensuite le mot de passe 2FA. Le Bridge conserve la session localement et chiffrée.
+
+Pour OpenRouter, créez votre clé sur <https://openrouter.ai/keys>, puis
+enregistrez-la dans *Paramètres → OpenRouter* si elle n'est pas déjà dans `.env`.
+Utilisez le test de connexion et sélectionnez un modèle disponible. La disponibilité
+et les quotas des modèles gratuits peuvent varier ; gardez
+`OPENROUTER_FREE_ONLY=true` si vous voulez limiter la sélection automatique.
+
+### 9. Vérifier le fonctionnement en PAPER
 
 Le mode d'exécution par défaut est `PAPER` et le trading automatique est
 désactivé (`auto_trading_enabled = false`). Ajoutez un canal : il démarre
 **toujours** en mode `OBSERVE`. Regardez le Bridge interpréter les messages sans
-rien envoyer, puis passez progressivement à `MANUAL`, puis à `AUTO`, et
-seulement ensuite au mode `MT5_DEMO`.
+rien envoyer. Vérifiez les signaux, le journal, les diagnostics et les règles de
+risque. Passez ensuite à `MANUAL` puis, si souhaité, à `AUTO` en PAPER.
+Essayez `MT5_DEMO` seulement après avoir vérifié le compte démo connecté dans MT5.
+Le mode réel exige un déverrouillage explicite dans l'application.
 
 Détails : [docs/DEMO_TESTING.md](docs/DEMO_TESTING.md) puis
 [docs/GO_LIVE_CHECKLIST.md](docs/GO_LIVE_CHECKLIST.md).
+
+---
+
+## Utilisation au quotidien
+
+Ouvrez MetaTrader 5 et vérifiez le compte connecté, puis démarrez le Bridge depuis
+la racine du projet. Ouvrez ensuite TradePilot sur le téléphone. L'appairage
+n'est pas à refaire tant que le jeton de l'appareil reste valide.
+
+| Action | Commande depuis la racine |
+|---|---|
+| Démarrer avec console | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start_bridge.ps1` |
+| Démarrer sans tunnel pour cette session | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start_bridge.ps1 -NoNgrok` |
+| Démarrer en arrière-plan | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start_bridge_background.ps1` |
+| Arrêter le Bridge en arrière-plan | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop_bridge.ps1` |
+| Vérifier l'environnement | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check_environment.ps1` |
+| Obtenir un nouveau code d'appairage | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\pairing_code.ps1` |
+
+Pour le lancement avec console, utilisez `Ctrl+C` dans cette console. Les
+journaux se trouvent dans `bridge/data/logs/`. Ne démarrez pas simultanément
+deux instances sur le même port.
+
+### Démarrage automatique à l'ouverture de session Windows
+
+Dans une console PowerShell **administrateur**, à la racine :
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install_autostart.ps1
+```
+
+Le script installe la tâche `TradePilotBridge`, exécutée en arrière-plan à
+l'ouverture de session. MetaTrader 5 doit également être ouvert dans cette
+session ; la tâche ne remplace pas son lancement.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install_autostart.ps1 -Status
+```
+
+Pour supprimer ce démarrage automatique, lancez le même script avec `-Remove`
+depuis une console administrateur.
+
+### Accès hors du réseau local avec ngrok
+
+Installez ngrok, puis renseignez **uniquement dans `bridge/.env`** :
+`NGROK_ENABLED=true`, `NGROK_AUTHTOKEN` et `NGROK_DOMAIN` avec vos propres valeurs.
+Le script d'installation accepte `-WithNgrok` pour télécharger le binaire.
+`scripts/setup_ngrok.ps1` est également disponible pour la configuration.
+
+Redémarrez le Bridge, puis saisissez dans l'application l'URL **HTTPS réelle**
+affichée au démarrage. ngrok peut joindre le Bridge sur `127.0.0.1` ; il n'est
+pas nécessaire d'ouvrir le port du routeur. Le PC doit toujours rester allumé.
+
+## Vérifier le projet après une modification
+
+Les tests ne sont pas nécessaires à chaque démarrage. Pour vérifier les sources,
+depuis la racine, installez les outils de développement puis lancez les tests du Bridge :
+
+```powershell
+.\bridge\.venv\Scripts\python.exe -m pip install -r .\bridge\requirements-dev.txt
+cd .\bridge
+.\.venv\Scripts\python.exe -m pytest
+cd ..
+```
+
+Pour Android :
+
+```powershell
+cd .\mobile
+flutter analyze
+flutter test
+cd ..
+```
+
+## Résoudre les problèmes de démarrage
+
+| Problème | Vérification / solution |
+|---|---|
+| `python` ou `flutter` introuvable | installer le SDK et corriger le `PATH`, puis rouvrir PowerShell |
+| Environnement `bridge/.venv` absent | relancer `scripts/install_bridge.ps1` |
+| Port `8787` occupé | vérifier si le Bridge tourne déjà ; arrêter l'instance existante ou modifier `BRIDGE_PORT` et l'adresse dans l'application |
+| Le téléphone ne joint pas le PC | vérifier `BRIDGE_HOST=0.0.0.0`, l'IPv4 du PC, le même réseau, le pare-feu privé et l'absence d'isolation Wi-Fi |
+| Appairage refusé | demander un nouveau code local, vérifier l'adresse et la validité du code |
+| MT5 indisponible | vérifier Python 64 bits, le paquet `MetaTrader5`, le terminal ouvert et `MT5_TERMINAL_PATH` |
+| Compilation : `google-services.json` absent | fournir le fichier Firebase correspondant au paquet `com.tradepilot.tradepilot` |
+| Compilation : SDK / licences Android | lancer `flutter doctor -v` et `flutter doctor --android-licenses` |
+| Notifications absentes application fermée | vérifier le compte de service FCM côté Bridge, le fichier Firebase Android et la permission de notification |
+| Erreur OpenRouter / quota | tester la connexion, vérifier la clé et choisir un modèle encore disponible |
+
+Voir également [le dépannage détaillé](docs/TROUBLESHOOTING.md).
+
+## Fichiers locaux et secrets
+
+Ne partagez jamais `bridge/.env`, la `MASTER_KEY`, les sessions Telegram,
+les clés API, les mots de passe, les jetons d'appareil ou la clé privée Firebase.
+La configuration Android Firebase et les fichiers de signature restent également
+locaux. `.gitignore` exclut ces fichiers, les données du Bridge et leurs dossiers
+de compilation. Les exemples de configuration doivent contenir uniquement des
+valeurs vides ou fictives.
+
+Une exclusion Git ne retire pas un secret déjà commité. Avant tout envoi,
+contrôlez aussi les fichiers suivis et l'historique ; ne forcez pas l'ajout d'un
+fichier ignoré. Sur une nouvelle machine, recréez la configuration locale et
+restaurez les secrets par un moyen privé, séparément du code.
+
+Si Gitleaks est installé, lancez ce contrôle avant un envoi :
+
+```powershell
+gitleaks git . --redact --log-opts="--all"
+```
+
+La configuration `.gitleaks.toml` conserve les règles standard et autorise
+uniquement trois valeurs fictives ou internes vérifiées. Aucun fichier source
+n'est exclu du scan. `--redact` masque les valeurs dans les résultats.
 
 ---
 

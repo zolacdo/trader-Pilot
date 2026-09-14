@@ -1,7 +1,10 @@
 # ---- Secrets / runtime data ----
 .env
 *.env
+.env.*
+*.env.*
 !.env.example
+!*.env.example
 bridge/data/
 bridge/logs/
 bridge/*.session
@@ -11,12 +14,20 @@ bridge/*.session-journal
 **/*.db
 secrets/
 ngrok.yml
+ngrok.yaml
 master.key
+*.key
 *.session
 *.session-journal
+*.sqlite
+*.sqlite3-*
+*.db-*
 *.pem
 *.pfx
 *.p12
+*.p8
+id_rsa
+id_ed25519
 
 # ---- Python ----
 __pycache__/
@@ -74,3 +85,5 @@ google-services.json
 mobile/android/app/google-services.json
 *-firebase-adminsdk-*.json
 firebase-service-account*.json
+*service-account*.json
+*service_account*.json

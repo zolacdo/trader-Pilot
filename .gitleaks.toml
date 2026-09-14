@@ -1,0 +1,15 @@
+title = "TradePilot : controle des secrets"
+
+[extend]
+useDefault = true
+
+# Exceptions limitees a trois valeurs fictives / identifiants internes examines.
+# Aucun fichier ni repertoire du code n'est exclu de l'analyse.
+[allowlist]
+description = "Identifiant interne et valeurs de test ou de documentation"
+regexTarget = "secret"
+regexes = [
+    '''^telegram\.2fa_hint$''',
+    '''^ya29\.jeton-de-test-tres-secret$''',
+    '''^0123456789abcdef0123456789abcdef$''',
+]
