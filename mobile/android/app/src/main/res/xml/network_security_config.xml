@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Politique reseau de TradePilot.
+
+  Le Bridge tourne sur le PC personnel de l'utilisateur, sans certificat TLS :
+  la liaison en reseau local se fait donc en HTTP clair vers une adresse privee
+  (192.168.x.x, 10.x.x.x, 172.16-31.x.x), qui n'est pas connue a l'avance.
+  Android ne sait pas exprimer une plage d'adresses dans ce fichier : le trafic
+  en clair doit donc etre autorise globalement pour rendre ce mode possible.
+
+  Ce que cela n'affaiblit PAS :
+   - l'acces a distance passe par le tunnel HTTPS (ngrok ou domaine personnel) ;
+   - toutes les routes sensibles du Bridge exigent le jeton de peripherique ;
+   - aucun secret (cle OpenRouter, session Telegram, identifiants MT5) ne
+     circule vers le telephone : ils restent sur le Bridge.
+
+  Recommandation, rappelee dans docs/SECURITY.md : utiliser l'adresse HTTPS du
+  tunnel des que le telephone sort du reseau domestique.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

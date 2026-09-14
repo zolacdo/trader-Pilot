@@ -1,0 +1,61 @@
+name: tradepilot
+description: TradePilot - gestion et copie de signaux de trading, pilotage du Bridge MetaTrader 5.
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Etat et navigation
+  flutter_riverpod: ^2.5.1
+  go_router: ^14.2.7
+
+  # Reseau
+  dio: ^5.7.0
+  web_socket_channel: ^3.0.1
+
+  # Stockage
+  drift: ^2.20.3
+  sqlite3_flutter_libs: ^0.5.24
+  path_provider: ^2.1.4
+  path: ^1.9.0
+  shared_preferences: ^2.3.2
+  flutter_secure_storage: ^9.2.2
+
+  # Interface
+  cupertino_icons: ^1.0.8
+  intl: ^0.19.0
+  fl_chart: ^0.69.0
+  image_picker: ^1.1.2
+  qr_code_scanner_plus: ^2.0.10
+
+  # Notifications locales
+  flutter_local_notifications: ^17.2.3
+
+  # Notifications push : seul moyen d'etre prevenu quand l'application est
+  # fermee. Sans elles, une alerte creee pendant la nuit n'arrive jamais.
+  firebase_core: ^3.6.0
+  firebase_messaging: ^15.1.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  build_runner: ^2.4.13
+  drift_dev: ^2.20.3
+  flutter_launcher_icons: ^0.14.1
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icon/
+
+flutter_launcher_icons:
+  android: true
+  image_path: "assets/icon/tradepilot_icon.png"
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/icon/tradepilot_icon_foreground.png"

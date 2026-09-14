@@ -1,0 +1,76 @@
+# ---- Secrets / runtime data ----
+.env
+*.env
+!.env.example
+bridge/data/
+bridge/logs/
+bridge/*.session
+bridge/*.session-journal
+**/telegram.session*
+**/*.sqlite3
+**/*.db
+secrets/
+ngrok.yml
+master.key
+*.session
+*.session-journal
+*.pem
+*.pfx
+*.p12
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+htmlcov/
+.coverage
+.coverage.*
+
+# ---- Flutter / Dart ----
+mobile/.dart_tool/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/.packages
+mobile/build/
+mobile/android/.gradle/
+mobile/android/app/debug/
+mobile/android/app/profile/
+mobile/android/app/release/
+mobile/android/local.properties
+mobile/android/key.properties
+mobile/**/*.g.dart.bak
+mobile/ios/
+mobile/macos/
+mobile/linux/
+mobile/windows/
+mobile/web/
+*.jks
+*.keystore
+
+# ---- OS / IDE ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml
+*.log
+
+# ---- Firebase ----
+# google-services.json porte l'identite du projet et une cle d'API Android ;
+# le fichier admin-sdk porte une CLE PRIVEE qui autorise l'envoi de
+# notifications au nom du projet. Ni l'un ni l'autre ne doit quitter la
+# machine. La cle de service est de plus rangee dans le coffre chiffre du
+# Bridge, ce qui rend le fichier superflu une fois importe.
+google-services.json
+mobile/android/app/google-services.json
+*-firebase-adminsdk-*.json
+firebase-service-account*.json

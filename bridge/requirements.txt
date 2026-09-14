@@ -1,0 +1,23 @@
+# Dependances du Bridge TradePilot (Windows + Python 3.11+)
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.7
+pydantic-settings>=2.3
+sqlmodel>=0.0.22
+sqlalchemy>=2.0
+aiosqlite>=0.20
+httpx>=0.27
+telethon>=1.36
+cryptography>=42.0
+python-multipart>=0.0.9
+websockets>=12.0
+# Lecture de config/watcher.yaml. Arrive deja avec uvicorn[standard] ;
+# declare ici parce que le Market Watcher s'en sert explicitement.
+pyyaml>=6.0
+
+# MetaTrader 5 : Windows uniquement. Sans lui, le Bridge demarre quand meme
+# et signale MT5 comme indisponible dans le diagnostic.
+MetaTrader5>=5.0.45; sys_platform == "win32"
+
+# Tunnel distant optionnel
+pyngrok>=7.2

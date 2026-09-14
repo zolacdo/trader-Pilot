@@ -1,0 +1,122 @@
+# =============================================================================
+# AI Market Watcher — configuration (CDC3 section 53)
+# =============================================================================
+# Ce fichier fixe les valeurs de depart. Les reglages modifies depuis l'API
+# (PUT /api/v1/watcher/settings) sont stockes en base et PRIMENT sur ce
+# fichier : c'est normal, ils sont plus recents.
+#
+# Supprimer une ligne remet la valeur par defaut du code.
+# Aucun secret ici : jetons et identifiants restent dans bridge/.env.
+# =============================================================================
+
+# --- service ----------------------------------------------------------------
+# Passer a false coupe le watcher sans arreter le Bridge.
+enabled: true
+
+# true : analyse et enregistre tout, mais ne publie rien sur Telegram.
+# A utiliser pour observer le systeme avant de le laisser parler.
+dry_run: false
+
+# Instruments surveilles. Ceux qui n'existent pas chez le broker sont
+# ecartes au demarrage et signales dans /api/v1/watcher/health.
+#
+# Utilisez les noms canoniques que le Bridge sait traduire : il resout NAS100
+# vers USTECm et US500 vers US500m chez Exness. Ecrire SPX500 ne marcherait
+# pas — ce n'est pas un nom canonique connu du resolveur.
+symbols:
+  - BTCUSD
+  - XAUUSD
+  - EURUSD
+  - GBPUSD
+  - USDJPY
+  - ETHUSD
+  - US30
+  - NAS100
+  - US500
+
+# Profil d'unites de temps : default, scalping ou swing.
+#   default  : D1/H4 contexte, H1/M30 structure, M15 declencheur, M5 confirmation
+#   scalping : H1 contexte, M15 structure, M5 declencheur, M1 confirmation
+#   swing    : W1/D1 contexte, H4/H1 structure, M30 declencheur, M15 confirmation
+profile: default
+
+# Periodes des boucles, en secondes.
+scan_interval_seconds: 90
+lifecycle_interval_seconds: 30
+bars: 300
+
+# --- seuils de decision (score sur 100) --------------------------------------
+# Un signal n'est publie qu'a partir de minimum_score. Entre watch_score et
+# minimum_score, l'instrument passe « sous surveillance » sans signal.
+minimum_score: 70
+watch_score: 55
+strong_score: 85
+minimum_rr: 1.5
+
+# --- Risk Manager ------------------------------------------------------------
+# Plafond volontairement tres haut : il ne bloque plus rien. Un « point » n'a
+# pas la meme valeur d'un instrument a l'autre — 1000 points sur BTCUSD font
+# 10 $ sur 77 000 $, soit 0,013 %, alors que 1000 points sur EURUSD seraient
+# enormes. Mesure le 2026-09-12 : BTCUSD cote 1000 points de spread, ETHUSD
+# 100. Un plafond a 60 bloquait donc les deux en permanence.
+max_spread_points: 1500
+# C'EST LUI le vrai garde-fou : le spread rapporte a l'amplitude reelle de
+# l'instrument, seule mesure comparable. Mesure le 2026-09-12, marches
+# ouverts : BTCUSD 0,197 et ETHUSD 0,241 passent ; marches fermes, EURUSD 0,651
+# et GBPUSD 0,942 sont rejetes, ce qui est exactement voulu.
+max_spread_atr_ratio: 0.35
+block_high_impact_news: true
+before_news_minutes: 15
+after_news_minutes: 15
+# Fenetre elargie pour les annonces CRITICAL (FOMC, NFP, CPI).
+critical_news_minutes: 30
+block_extreme_volatility: true
+
+# --- qualite des donnees -----------------------------------------------------
+# Plancher de tolerance sur l'age de la derniere bougie. La tolerance reelle
+# vaut deux bougies de l'unite de temps analysee : une bougie M15 qui vient de
+# s'ouvrir a legitimement quinze minutes. Ce reglage ne sert donc que pour les
+# unites de temps tres courtes.
+max_data_age_seconds: 600
+minimum_candles: 120
+
+# --- anti-spam ---------------------------------------------------------------
+cooldown_minutes: 45
+signal_ttl_minutes: 240
+max_active_signals: 6
+max_signals_per_day: 12
+watch_alert_cooldown_minutes: 120
+
+# --- Telegram ----------------------------------------------------------------
+# Titre du canal, son @pseudo, ou son identifiant numerique. Le canal est
+# retrouve parmi les conversations du compte Telegram deja connecte au Bridge.
+# Aucun canal n'est rejoint automatiquement.
+telegram_channel: "tradepilot test"
+# detailed : message complet et explique. simple : six lignes.
+telegram_format: detailed
+send_watch_alerts: true
+send_news_alerts: true
+send_signal_updates: true
+send_startup_message: true
+
+# --- intelligence artificielle -----------------------------------------------
+# L'IA commente, elle ne fixe aucun prix et ne peut annuler aucune regle.
+ai_enabled: true
+# En dessous de ce score, aucun appel n'est fait : l'analyse deterministe a
+# deja tranche (CDC3 section 73).
+ai_min_score: 60
+
+# --- ponderations du score (CDC3 section 24) ---------------------------------
+# La somme n'a pas besoin de faire 100 : le score est ramene sur 100 a partir
+# des seuls criteres pour lesquels une donnee existe.
+weights:
+  market_structure: 20
+  multi_timeframe: 15
+  momentum: 10
+  support_resistance: 10
+  volume: 5
+  volatility: 5
+  indicators: 10
+  sentiment: 10
+  fundamental: 10
+  risk_reward: 5
