@@ -163,7 +163,7 @@ async def signal_detail(
     orders = await trade_repo.pending_orders(session, signal_id=signal_id)
     audit = await journal_repo.list_audit(session, limit=20, signal_id=signal_id)
     channel = await channel_repo.get(session, signal.channel_id) if signal.channel_id else None
-    follow_ups = await signal_repo.list_signals(session, limit=20)
+    follow_ups = await signal_repo.follow_ups_for(session, signal_id)
 
     return {
         **_signal_payload(signal),
@@ -215,7 +215,7 @@ async def signal_detail(
             for order in orders
         ],
         "followUps": [
-            _signal_payload(item) for item in follow_ups if item.original_signal_id == signal_id
+            _signal_payload(item) for item in follow_ups
         ],
         "audit": [
             {

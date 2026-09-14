@@ -115,8 +115,17 @@ async def list_signals(
     direction: Direction | None = None,
     statuses: list[SignalStatus] | None = None,
     since: datetime | None = None,
+    include_follow_ups: bool = False,
 ) -> list[Signal]:
     statement = select(Signal)
+    if not include_follow_ups:
+        # Un message de suivi -- « TP1 atteint », « stop a break even »,
+        # « TARGET COMPLETE 30+ PIPS » -- est un evenement du signal parent,
+        # pas un signal. Sa ligne ne porte ni entree, ni stop, ni objectif :
+        # affichee, elle donnait une carte vide « XAUUSD SELL / -- / -- / -- »
+        # au milieu des vrais signaux. Elle reste en base, rattachee a son
+        # parent, dont elle pilote la gestion ; elle ne remonte plus seule.
+        statement = statement.where(Signal.original_signal_id == None)  # noqa: E711
     if channel_id is not None:
         statement = statement.where(Signal.channel_id == channel_id)
     if symbol:
@@ -128,6 +137,23 @@ async def list_signals(
     if since is not None:
         statement = statement.where(Signal.received_at >= since)
     statement = statement.order_by(Signal.received_at.desc()).offset(offset).limit(limit)
+    result = await session.exec(statement)
+    return list(result.all())
+
+
+async def follow_ups_for(session: AsyncSession, signal_id: int, limit: int = 20) -> list[Signal]:
+    """Messages de suivi rattaches a ce signal, du plus ancien au plus recent.
+
+    La fiche du signal les listait en prenant les vingt derniers signaux tous
+    canaux confondus puis en gardant ceux dont le parent correspondait : un
+    suivi plus vieux que ces vingt lignes disparaissait de la fiche.
+    """
+    statement = (
+        select(Signal)
+        .where(Signal.original_signal_id == signal_id)
+        .order_by(Signal.received_at)
+        .limit(limit)
+    )
     result = await session.exec(statement)
     return list(result.all())
 
