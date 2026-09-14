@@ -265,10 +265,14 @@ async def test_scenario_85_doublon_ne_produit_qu_un_seul_trade(
 # Section 86 : signal ambigu, aucune IA disponible
 # ---------------------------------------------------------------------------
 
-async def test_scenario_86_signal_ambigu_reste_en_revue(
+async def test_scenario_86_signal_ambigu_est_rejete(
     session: AsyncSession, paper: PaperTradingService
 ) -> None:
-    """Stop loss du mauvais cote : le parser local refuse, aucun ordre ne part."""
+    """Stop loss du mauvais cote : le parser local refuse, aucun ordre ne part.
+
+    Le refus est terminal. Rien n'attend l'utilisateur : le systeme tranche
+    lui-meme et consigne le motif.
+    """
     channel = await prepare(session, paper)
 
     outcome = await trading_engine.handle_message(
@@ -282,7 +286,7 @@ async def test_scenario_86_signal_ambigu_reste_en_revue(
     assert outcome.executed is False
     signal = await signal_repo.get(session, outcome.signal_id)
     assert signal is not None
-    assert signal.status is SignalStatus.NEEDS_REVIEW
+    assert signal.status is SignalStatus.REJECTED
     assert await paper.positions() == []
 
 

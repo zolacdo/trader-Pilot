@@ -428,7 +428,20 @@ async def process_message(
     status = SignalStatus.PARSED
     detail = ""
     if not validation.ok:
-        status = SignalStatus.NEEDS_REVIEW
+        # REJECTED, pas NEEDS_REVIEW. Tous les motifs bloquants du validateur
+        # sont structurels : instrument absent, stop du mauvais cote, objectif
+        # du mauvais cote, zone d'entree inversee. Aucune decision humaine ne
+        # les rend negociables -- l'API n'offre qu'approuver ou refuser, pas
+        # corriger, et approuver enverrait au courtier un achat dont le stop
+        # est au-dessus de l'entree.
+        #
+        # Le 14/09/2026 trois signaux dormaient ainsi dans la file « a
+        # valider » : un achat PARAMOUR a 4284 stop 4374, une vente dont
+        # quatre objectifs sur cinq etaient au-dessus de la zone, et une
+        # publication du watcher mal relue. Aucun ne pouvait etre sauve, et
+        # tous les trois attendaient un clic qui n'aurait rien change.
+        # Le systeme ne doit rien demander : il tranche et il trace.
+        status = SignalStatus.REJECTED
         blocking = validation.first_blocking
         detail = blocking.message if blocking else "Signal incoherent"
 
@@ -494,9 +507,9 @@ async def process_message(
         },
     )
 
-    if status is SignalStatus.NEEDS_REVIEW:
+    if status is SignalStatus.REJECTED:
         event_bus.publish(
-            EventType.SIGNAL_NEEDS_REVIEW, {"signalId": signal.id, "reason": detail}
+            EventType.SIGNAL_REJECTED, {"signalId": signal.id, "reason": detail}
         )
         if manual:
             return PipelineResult(

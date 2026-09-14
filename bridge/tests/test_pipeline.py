@@ -105,18 +105,25 @@ async def test_un_signal_valide_est_persiste_avec_ses_valeurs(session: AsyncSess
     assert any(event.stage == "parser" for event in events)
 
 
-async def test_un_signal_incoherent_part_en_revue(session: AsyncSession) -> None:
+async def test_un_signal_incoherent_est_rejete(session: AsyncSession) -> None:
+    """Stop du mauvais cote : refus definitif, et non une file d'attente.
+
+    Aucune decision humaine ne rend cet achat negociable -- son stop est
+    au-dessus de son entree. Le laisser en NEEDS_REVIEW ne faisait que remplir
+    la liste « a valider » de signaux qu'il aurait ete dangereux d'approuver.
+    """
     channel = await make_channel(session)
     result = await pipeline.process_message(
         session, "XAUUSD BUY 3320\nSL 3340\nTP 3350", channel=channel, message_id=8, allow_ai=False
     )
     assert result.signal is not None
-    assert result.signal.status is SignalStatus.NEEDS_REVIEW
+    assert result.signal.status is SignalStatus.REJECTED
     assert result.action == "no_action"
     assert result.validation is not None and result.validation.ok is False
 
 
-async def test_mode_manuel_retourne_le_signal_en_revue(session: AsyncSession) -> None:
+async def test_mode_manuel_rejette_aussi_un_signal_incoherent(session: AsyncSession) -> None:
+    """Le mode manuel ne rattrape pas une structure impossible."""
     channel = await make_channel(session)
     result = await pipeline.process_message(
         session, "XAUUSD BUY 3320\nSL 3340\nTP 3350",
@@ -124,7 +131,7 @@ async def test_mode_manuel_retourne_le_signal_en_revue(session: AsyncSession) ->
     )
     assert result.action == "new_signal"
     assert result.signal is not None
-    assert result.signal.status is SignalStatus.NEEDS_REVIEW
+    assert result.signal.status is SignalStatus.REJECTED
 
 
 # ---------------------------------------------------------------------------
