@@ -341,6 +341,15 @@ class WatcherEngine:
         )
         result = await self._publisher.publish(session, text, config)
 
+        # Le moteur recoit TOUJOURS le format simple, jamais le texte destine a
+        # l'oeil. Le format detaille annote chaque objectif de son rapport de
+        # risque — « TP1 : 1.34474  (1:1.0) » — et le parseur lisait les deux
+        # nombres : le 14/09/2026, un GBPUSD SELL est arrive avec les objectifs
+        # [3.0, 2.0, 1.34474, 1.34169, 1.33865, 1.0] et a ete refuse pour
+        # « TP1 doit etre sous l'entree ». Les niveaux sont les memes dans les
+        # deux textes ; seule la mise en forme change.
+        texte_machine = formatter.simple_signal(signal)
+
         # L'execution ne depend pas de la publication : un canal injoignable
         # ne doit pas empecher de prendre la position. L'identifiant du message
         # n'est transmis que s'il existe vraiment, car il sert de cle
@@ -348,7 +357,7 @@ class WatcherEngine:
         target = self._publisher.target
         outcome.execution = await execute_signal(
             session,
-            text,
+            texte_machine,
             config,
             telegram_channel_id=target.identifier if target else None,
             message_id=result.message_id if result.sent else None,

@@ -194,9 +194,28 @@ class TestChaineComplete:
         assert outcome.execution is not None
         assert outcome.execution.attempted is True
         assert len(espion.appels) == 1
-        # Le moteur doit recevoir le texte exact qui a ete publie, pas un
-        # resume : c’est ce qui garantit qu’il n’existe qu’une seule lecture.
-        assert espion.appels[0]["text"] == recorder.messages[0]
+
+        # Le moteur recoit les MEMES NIVEAUX que le lecteur, pas le meme texte.
+        # Exiger un texte identique etait un piege : le format detaille annote
+        # chaque objectif de son rapport de risque — « TP1 : 1.34474  (1:1.0) »
+        # — et le parseur lisait les deux nombres. Le 14/09/2026, un GBPUSD
+        # SELL est arrive avec les objectifs [3.0, 2.0, 1.34474, 1.34169,
+        # 1.33865, 1.0] et a ete refuse pour « TP1 doit etre sous l'entree ».
+        # Ce qui compte est l'identite des niveaux, pas celle de la mise en page.
+        from app.services.signals import deterministic_parser, validator
+
+        signal = outcome.signal
+        assert signal is not None
+        lu = deterministic_parser.parse(espion.appels[0]["text"])
+        assert lu.symbol == signal.symbol
+        assert lu.direction is signal.direction
+        entree = lu.entry_price if lu.entry_price is not None else lu.entry_min
+        assert entree == pytest.approx(signal.entry)
+        assert lu.stop_loss == pytest.approx(signal.stop_loss)
+        assert lu.take_profits == pytest.approx(signal.targets)
+        assert validator.validate(validator.sanitize(lu)).ok, (
+            "le texte transmis au moteur doit passer le validateur"
+        )
 
     async def test_le_pied_de_page_dit_la_verite_en_mode_reel(self) -> None:
         """Annoncer que rien n’est passe serait faux, et grave."""
