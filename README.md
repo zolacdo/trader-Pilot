@@ -16,6 +16,10 @@ Le système est composé de deux parties :
 Le mode par défaut est **PAPER** : aucun ordre réel n'est envoyé tant que
 l'utilisateur ne change pas explicitement de mode.
 
+La connexion du téléphone au PC utilise **ngrok en HTTPS**. Le Bridge écoute
+sur `127.0.0.1:8787` et ngrok fournit l'adresse publique à saisir dans
+l'application, sur Wi-Fi comme sur réseau mobile.
+
 ---
 
 ## Ce que TradePilot fait
@@ -143,7 +147,7 @@ sur le téléphone et l'application Android ne remplace pas le Bridge.
 | Android Studio / Android SDK, JDK 17 ou plus | compiler l'APK ; installer les composants demandés par `flutter doctor` |
 | Projet Firebase et `google-services.json` | requis pour compiler la configuration Android actuelle |
 | Compte de service Firebase | facultatif, pour recevoir les notifications push même application fermée |
-| Compte et binaire ngrok | facultatif, pour accéder au Bridge en dehors du Wi-Fi local |
+| Compte et binaire ngrok, authtoken et domaine | connecter le téléphone au Bridge via HTTPS |
 
 Le projet déclare Gradle **8.12**, Android Gradle Plugin **8.9.1** et Kotlin
 **2.1.0** dans `mobile/android/`. Gradle télécharge sa distribution si elle
@@ -178,13 +182,13 @@ explicitement quand changer de dossier. Les commandes avec
 ### 1. Installer les dépendances du Bridge
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install_bridge.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install_bridge.ps1 -WithNgrok
 ```
 
 Le script crée `bridge\.venv`, installe les dépendances, génère `bridge\.env` à
 partir de `.env.example`, génère une `MASTER_KEY` Fernet si elle est vide et
-lance un diagnostic. Il peut proposer de télécharger ngrok : répondez non
-si vous utilisez seulement le réseau local. Il peut être relancé sans écraser
+lance un diagnostic. L'option `-WithNgrok` télécharge le binaire ngrok s'il
+est absent. Le script peut être relancé sans écraser
 la configuration existante.
 
 **Sauvegardez `bridge\.env` dans un emplacement privé** : la `MASTER_KEY`
@@ -202,14 +206,16 @@ notepad .\bridge\.env
 
 | Paramètre | Que renseigner |
 |---|---|
-| `BRIDGE_HOST` | `0.0.0.0` pour un téléphone sur le même Wi-Fi ; `127.0.0.1` pour un accès limité au PC ou via ngrok |
+| `BRIDGE_HOST` | conserver `127.0.0.1` : ngrok transmet les requêtes au Bridge local |
 | `BRIDGE_PORT` | `8787` par défaut |
 | `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_PHONE` | vos identifiants Telegram et numéro au format international ; vous pouvez aussi les saisir dans l'application |
 | `OPENROUTER_API_KEY` | votre clé OpenRouter, ou laissez vide pour la saisir ensuite dans les Paramètres de l'application |
 | `OPENROUTER_FREE_ONLY` | conserver `true` pour limiter la sélection automatique aux modèles gratuits |
 | `MT5_TERMINAL_PATH` | chemin complet de `terminal64.exe` si l'autodétection ne trouve pas le bon terminal |
 | `MT5_LOGIN`, `MT5_PASSWORD`, `MT5_SERVER` | laisser vides si la connexion est faite directement dans MetaTrader 5 |
-| `NGROK_ENABLED` | `false` pour commencer sur le réseau local |
+| `NGROK_ENABLED` | `true` pour démarrer le tunnel avec le Bridge |
+| `NGROK_AUTHTOKEN` | votre authtoken depuis le tableau de bord ngrok ; le conserver uniquement dans `bridge/.env` |
+| `NGROK_DOMAIN` | votre domaine réservé ngrok, sans `https://` ni chemin |
 | `MASTER_KEY` | conserver la valeur générée, ne pas la remplacer à chaque démarrage |
 | `DB_HOST`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD` | laisser vides pour SQLite ; renseigner pour utiliser un serveur PostgreSQL existant |
 
@@ -219,6 +225,12 @@ nécessaire. PostgreSQL est une option ; voir
 [le guide du Bridge](docs/BRIDGE_WINDOWS_SETUP.md).
 
 Après toute modification de `.env`, redémarrez le Bridge pour recharger les valeurs.
+
+Pour ngrok, récupérez votre authtoken et réservez le domaine depuis
+<https://dashboard.ngrok.com>. Saisissez ces valeurs dans `bridge/.env`.
+Ne copiez pas l'authtoken dans le README, une commande committée ou un fichier
+d'exemple. Avec `NGROK_ENABLED=true`, le Bridge lance et surveille le tunnel ;
+il réutilise un tunnel déjà actif si ngrok est déjà lancé sur le PC.
 
 ### 3. Préparer MetaTrader 5
 
@@ -236,6 +248,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start_bridge.ps1
 
 Gardez cette console ouverte. Le Bridge y affiche ses journaux, son adresse et
 un **code d'appairage valable 15 minutes et utilisable une seule fois**.
+Vérifiez aussi qu'une **adresse publique HTTPS ngrok** est affichée. C'est
+cette adresse que le téléphone utilisera ; si elle manque, consultez les
+journaux et les paramètres ngrok avant l'appairage.
 `Ctrl+C` arrête proprement ce lancement.
 
 Dans une **deuxième console PowerShell** sur le PC, vérifiez l'API :
@@ -324,20 +339,20 @@ les informations de build affichées dans l'application.
 
 ### 7. Connecter le téléphone au Bridge
 
-Sur le même Wi-Fi, utilisez `BRIDGE_HOST=0.0.0.0` dans `bridge/.env` et
-redémarrez le Bridge. Sur le PC, tapez `ipconfig` et relevez l'adresse IPv4 de
-l'interface Wi-Fi / Ethernet active, par exemple `192.168.1.20`.
+Dans l'application TradePilot, saisissez **l'URL HTTPS publique affichée par
+le Bridge**, par exemple `https://votre-domaine.ngrok-free.app`, puis le code
+d'appairage affiché dans la console. Remplacez cet exemple par votre vraie URL.
+Le PC et le téléphone doivent avoir Internet ; ils peuvent être sur des réseaux
+différents. Il n'est pas nécessaire d'ouvrir le port `8787` dans le routeur.
 
-Dans l'application TradePilot, saisissez **`http://192.168.1.20:8787`** et le
-code d'appairage affiché dans la console. Remplacez l'adresse par celle du PC.
-`127.0.0.1` sur le téléphone désigne le téléphone lui-même ; `0.0.0.0` est une
-adresse d'écoute et ne doit pas être saisie dans l'application.
+Ne saisissez pas `127.0.0.1` ni `0.0.0.0` dans l'application : ces adresses ne
+désignent pas l'URL publique du PC. Si ngrok ne démarre pas, vérifiez le binaire,
+l'authtoken, le domaine et les messages d'erreur dans la console du Bridge.
 
-Si Windows demande l'accès réseau, autorisez Python sur le **réseau privé**.
-Si nécessaire, autorisez le port TCP `8787` dans le pare-feu pour le réseau
-privé et le sous-réseau local. Le PC et le téléphone doivent pouvoir communiquer
-(certains Wi-Fi invités isolent les appareils). Ne publiez pas ce port HTTP
-directement sur Internet.
+Pour un accès local alternatif sans ngrok, le Bridge peut écouter sur
+`0.0.0.0` ; le téléphone utilise alors l'IPv4 du PC et le port `8787` sur le même
+réseau privé, avec le pare-feu adapté. La procédure principale de ce projet
+reste la connexion HTTPS via ngrok.
 
 Le code a expiré ou a déjà été utilisé ? Depuis une deuxième console à la racine :
 
@@ -414,7 +429,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install_autostart.
 Pour supprimer ce démarrage automatique, lancez le même script avec `-Remove`
 depuis une console administrateur.
 
-### Accès hors du réseau local avec ngrok
+### Connexion HTTPS avec ngrok
 
 Installez ngrok, puis renseignez **uniquement dans `bridge/.env`** :
 `NGROK_ENABLED=true`, `NGROK_AUTHTOKEN` et `NGROK_DOMAIN` avec vos propres valeurs.
@@ -453,7 +468,7 @@ cd ..
 | `python` ou `flutter` introuvable | installer le SDK et corriger le `PATH`, puis rouvrir PowerShell |
 | Environnement `bridge/.venv` absent | relancer `scripts/install_bridge.ps1` |
 | Port `8787` occupé | vérifier si le Bridge tourne déjà ; arrêter l'instance existante ou modifier `BRIDGE_PORT` et l'adresse dans l'application |
-| Le téléphone ne joint pas le PC | vérifier `BRIDGE_HOST=0.0.0.0`, l'IPv4 du PC, le même réseau, le pare-feu privé et l'absence d'isolation Wi-Fi |
+| Le téléphone ne joint pas le PC via ngrok | vérifier que le Bridge et le tunnel tournent, l'URL HTTPS saisie, la connexion Internet, l'authtoken et le domaine ngrok |
 | Appairage refusé | demander un nouveau code local, vérifier l'adresse et la validité du code |
 | MT5 indisponible | vérifier Python 64 bits, le paquet `MetaTrader5`, le terminal ouvert et `MT5_TERMINAL_PATH` |
 | Compilation : `google-services.json` absent | fournir le fichier Firebase correspondant au paquet `com.tradepilot.tradepilot` |
