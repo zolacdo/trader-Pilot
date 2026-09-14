@@ -149,3 +149,37 @@ class TelegramMessage(SQLModel, table=True):
     edited: bool = Field(default=False)
     processed: bool = Field(default=False, index=True)
     is_historical: bool = Field(default=False)
+
+
+class PublishedMessage(SQLModel, table=True):
+    """Message que le Bridge a lui-meme publie sur Telegram.
+
+    Le canal de publication fait partie des canaux surveilles : le Bridge
+    relit donc sa propre production. Ses annonces de trade portent un ordre
+    complet — symbole, sens, entree, stop, objectifs — que le parseur lit
+    comme un nouveau signal. Le 14/09/2026, un seul vrai signal XAUUSD a
+    ainsi produit quatre ordres : chaque execution publiait une annonce, qui
+    etait relue, qui declenchait une execution.
+
+    Ce registre coupe la boucle a la racine. Il ne repose sur aucune
+    reconnaissance de texte : on note l'identifiant rendu par Telegram a
+    l'envoi, et on refuse ce meme identifiant au retour. Aucune reformulation
+    ne peut le contourner.
+    """
+
+    __tablename__ = "published_messages"
+    __table_args__ = (
+        UniqueConstraint("chat_id", "message_id", name="uq_published_message"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    chat_id: int = Field(sa_type=BigInteger, index=True)
+    message_id: int = Field(sa_type=BigInteger, index=True)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "chatId": self.chat_id,
+            "messageId": self.message_id,
+            "createdAt": self.created_at.isoformat() if self.created_at else None,
+        }

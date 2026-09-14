@@ -95,6 +95,9 @@ async def execute_signal(
             text=text,
             channel=channel,
             message_id=message_id,
+            # Remise directe, pas un message lu : le registre des publications
+            # propres ne doit pas refuser ce que le watcher vient de decider.
+            internal_handoff=True,
         )
     except Exception as exc:
         logger.exception("Echec de l'execution automatique d'un signal du watcher")

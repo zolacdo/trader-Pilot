@@ -157,7 +157,13 @@ class TradingEngine:
         message_id: int | None = None,
         message_date: datetime | None = None,
         reply_to_message_id: int | None = None,
+        internal_handoff: bool = False,
     ) -> ProcessOutcome:
+        """``internal_handoff`` : le Bridge se remet un signal a lui-meme.
+
+        Le Market Watcher publie puis transmet directement. Sans ce drapeau,
+        le registre des publications propres refuserait son execution.
+        """
         result = await pipeline.process_message(
             session,
             text=text,
@@ -165,6 +171,7 @@ class TradingEngine:
             message_id=message_id,
             message_date=message_date,
             reply_to_message_id=reply_to_message_id,
+            internal_handoff=internal_handoff,
         )
 
         if result.action == "duplicate":
@@ -357,6 +364,39 @@ class TradingEngine:
                 session, signal, decision.reason or RejectionReason.RISK_TOO_HIGH, decision.detail, decision
             )
 
+        # --- ordres en attente deja poses sur cet instrument ---------------
+        # A faire APRES l'approbation et AVANT l'execution : on n'annule rien
+        # pour un signal qui va etre refuse, et on ne laisse pas un ordre du
+        # sens contraire survivre a un signal qui vient de le contredire.
+        annules = await self._cancel_opposite_pending(
+            session, service, execution_mode, resolved.broker_symbol, parsed.direction
+        )
+        if annules:
+            await signal_repo.add_event(
+                session,
+                signal.id,
+                stage="risk",
+                message=(
+                    f"{annules} ordre(s) en attente de sens contraire annule(s) sur "
+                    f"{resolved.broker_symbol}"
+                ),
+            )
+
+        doublon = await self._equivalent_pending(
+            session, execution_mode, resolved.broker_symbol, parsed, resolved.info
+        )
+        if doublon is not None:
+            return await self._reject(
+                session,
+                signal,
+                RejectionReason.DUPLICATE_SIGNAL,
+                (
+                    f"Ordre identique deja en attente (#{doublon.ticket}) : "
+                    f"{resolved.broker_symbol} {parsed.direction.value} a {doublon.price}"
+                ),
+                decision,
+            )
+
         signal.computed_lot = decision.lot.volume if decision.lot else None
         signal.risk_amount = decision.lot.risk_amount if decision.lot else None
         signal.risk_reward = decision.risk_reward
@@ -498,6 +538,106 @@ class TradingEngine:
             detail=detail,
             decision=decision,
         )
+
+    # ------------------------------------------------------------------
+    # Ordres en attente deja poses sur l'instrument
+    # ------------------------------------------------------------------
+    async def _cancel_opposite_pending(
+        self,
+        session: AsyncSession,
+        service: MetaTraderService,
+        execution_mode: ExecutionMode,
+        broker_symbol: str,
+        direction: Any,
+    ) -> int:
+        """Annule les ordres en attente du sens contraire sur cet instrument.
+
+        Un signal de vente rend caduc un achat qui attend encore son
+        declenchement : le canal vient de dire l'inverse. Le 14/09/2026, des
+        ordres d'achat XAUUSD attendaient toujours alors que cinq signaux de
+        vente etaient passes depuis.
+
+        Seuls les ordres EN ATTENTE sont touches. Une position deja ouverte
+        n'est jamais fermee ici : ce serait un choix de gestion, pas une mise a
+        jour d'ordre.
+        """
+        if direction is None:
+            return 0
+        try:
+            en_attente = await trade_repo.pending_orders(session, execution_mode=execution_mode)
+        except Exception as exc:
+            logger.warning("Ordres en attente illisibles : %s", exc)
+            return 0
+
+        annules = 0
+        for ordre in en_attente:
+            if ordre.symbol != broker_symbol or ordre.direction is direction:
+                continue
+            try:
+                resultat = await service.cancel_order(ordre.ticket)
+            except Exception as exc:
+                logger.warning("Annulation de l'ordre %s impossible : %s", ordre.ticket, exc)
+                continue
+            if not resultat.ok:
+                logger.info(
+                    "Ordre %s non annule : %s", ordre.ticket, resultat.message
+                )
+                continue
+            ordre.state = PositionState.CANCELLED
+            await trade_repo.save_order(session, ordre)
+            event_bus.publish(EventType.ORDER_CANCELLED, {"ticket": ordre.ticket})
+            logger.info(
+                "Ordre %s (%s %s) annule : signal de sens contraire",
+                ordre.ticket,
+                ordre.symbol,
+                ordre.direction.value,
+            )
+            annules += 1
+        return annules
+
+    async def _equivalent_pending(
+        self,
+        session: AsyncSession,
+        execution_mode: ExecutionMode,
+        broker_symbol: str,
+        parsed: ParsedSignal,
+        symbol: Any,
+    ) -> Any:
+        """Un ordre identique attend-il deja ? Rend l'ordre trouve, sinon None.
+
+        Deux ordres sont identiques quand ils portent le meme instrument, le
+        meme sens et la meme entree, a un pas de cotation pres. Le stop est
+        compare quand les deux le connaissent.
+
+        Ce filet rattrape les republications d'un canal externe : le
+        14/09/2026, PARAMOUR a poste deux fois le meme signal XAUUSD a 3998, et
+        deux ordres ont ete poses.
+        """
+        entree = parsed.entry_price if parsed.entry_price is not None else parsed.entry_min
+        if entree is None or parsed.direction is None:
+            return None
+        # Tolerance d'un pas de cotation : deux messages du meme signal peuvent
+        # arrondir differemment sans decrire deux operations distinctes.
+        tolerance = max(getattr(symbol, "point", 0.0) or 0.0, 1e-9)
+        try:
+            en_attente = await trade_repo.pending_orders(session, execution_mode=execution_mode)
+        except Exception as exc:
+            logger.warning("Ordres en attente illisibles : %s", exc)
+            return None
+
+        for ordre in en_attente:
+            if ordre.symbol != broker_symbol or ordre.direction is not parsed.direction:
+                continue
+            if ordre.price is None or abs(ordre.price - entree) > tolerance:
+                continue
+            if (
+                ordre.stop_loss is not None
+                and parsed.stop_loss is not None
+                and abs(ordre.stop_loss - parsed.stop_loss) > tolerance
+            ):
+                continue
+            return ordre
+        return None
 
     # ------------------------------------------------------------------
     # Actions manuelles et urgence

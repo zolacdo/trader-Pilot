@@ -17,10 +17,11 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 
 from app.config.logging_config import get_logger
 from app.models.enums import EventLevel, ParserSource, SignalStatus
-from app.models.telegram import Channel
+from app.models.telegram import Channel, PublishedMessage
 from app.models.trading import Signal
 from app.repositories import channel_repo, settings_repo, signal_repo
 from app.services import journal
@@ -105,6 +106,40 @@ def has_minimum_order_content(parsed: ParsedSignal) -> bool:
         and entry is not None
         and parsed.stop_loss is not None
     )
+
+
+async def _is_own_publication(
+    session: AsyncSession, channel: Channel | None, message_id: int | None
+) -> bool:
+    """Ce message, est-ce nous qui venons de le publier ?
+
+    Le canal de publication fait partie des canaux surveilles. Les annonces de
+    trade du Bridge — « ORDRE EN ATTENTE », « ORDRE DECLENCHE » — portent un
+    ordre complet : symbole, sens, entree, stop, objectifs. Le parseur les lit
+    donc comme des signaux parfaitement valides.
+
+    Le 14/09/2026, un seul vrai signal XAUUSD de PARAMOUR a produit quatre
+    ordres identiques a 4310 : chaque execution publiait une annonce, relue au
+    tour suivant comme un nouveau signal, qui declenchait une execution, qui
+    publiait une annonce.
+
+    Le tri ne regarde ni le texte ni la forme : seulement l'identifiant que
+    Telegram nous a rendu a l'envoi. Aucune reformulation ne peut le
+    contourner, et aucune annonce future n'a besoin d'etre prevue ici.
+    """
+    if channel is None or message_id is None or not getattr(channel, "telegram_id", None):
+        return False
+    try:
+        result = await session.exec(
+            select(PublishedMessage.id)
+            .where(PublishedMessage.chat_id == int(channel.telegram_id))
+            .where(PublishedMessage.message_id == int(message_id))
+            .limit(1)
+        )
+        return result.first() is not None
+    except Exception as exc:  # un registre illisible ne doit rien bloquer
+        logger.debug("Registre des publications illisible : %s", exc)
+        return False
 
 
 async def _is_own_watcher_broadcast(
@@ -229,8 +264,18 @@ async def process_message(
     reply_to_message_id: int | None = None,
     allow_ai: bool = True,
     manual: bool = False,
+    internal_handoff: bool = False,
 ) -> PipelineResult:
-    """Traite un message entrant et produit au plus un signal."""
+    """Traite un message entrant et produit au plus un signal.
+
+    ``internal_handoff`` distingue deux appels qui arrivent pourtant par la
+    meme porte : un message LU sur Telegram, et un signal que le Bridge se
+    remet a lui-meme. Le Market Watcher publie son signal puis le transmet
+    directement au moteur avec l'identifiant du message publie. Sans cette
+    distinction, le registre des publications propres — dont c'est justement
+    le role d'ecarter cet identifiant — refuserait l'execution que le watcher
+    vient de demander.
+    """
     channel_id = channel.id if channel else None
 
     # ------------------------------------------------------------------
@@ -242,8 +287,14 @@ async def process_message(
     # publie par le watcher pour son propre signal irait se rattacher a une
     # position ouverte par un canal externe et declencherait une cloture
     # partielle sur le mauvais trade.
+    first_line = text.strip().splitlines()[0][:80] if text.strip() else "(vide)"
+    if not internal_handoff and await _is_own_publication(session, channel, message_id):
+        logger.info("Notre propre publication ignoree : %s", first_line)
+        return PipelineResult(
+            action="ignored",
+            detail="Message publie par le Bridge lui-meme : jamais rejoue comme signal",
+        )
     if await _is_own_watcher_broadcast(session, channel, text):
-        first_line = text.strip().splitlines()[0][:80] if text.strip() else "(vide)"
         logger.info("Message d'information du Market Watcher ignore : %s", first_line)
         return PipelineResult(
             action="ignored",

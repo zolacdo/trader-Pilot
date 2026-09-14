@@ -77,6 +77,7 @@ from app.models.telegram import (
     ChannelAnalysis,
     ChannelParserProfile,
     ChannelSettings,
+    PublishedMessage,
     TelegramAccount,
     TelegramMessage,
 )
@@ -154,6 +155,7 @@ __all__ = [
     "ParserSource",
     "PendingOrderRecord",
     "PositionState",
+    "PublishedMessage",
     "RejectionReason",
     "RiskEvent",
     "RiskSettings",

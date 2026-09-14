@@ -28,6 +28,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.logging_config import get_logger
+from app.models.telegram import PublishedMessage
 from app.repositories import settings_repo
 from app.services.telegram import telegram_service
 from app.services.telegram.client import TelegramFloodError, TelegramServiceError
@@ -261,7 +262,34 @@ class TelegramPublisher:
                 return PublishResult(reason=f"Resolution du canal impossible : {exc}")
 
             await self._respect_interval()
-            return await self._send_with_retry(payload)
+            result = await self._send_with_retry(payload)
+
+        # Hors du verrou : l'ecriture en base ne doit pas retenir les autres
+        # publications. Le canal de publication fait partie des canaux
+        # surveilles ; sans cette trace, le Bridge relirait ce message comme un
+        # signal entrant et rejouerait l'ordre qu'il vient de passer.
+        if result.sent and result.message_id:
+            await self._remember_published(session, result.message_id)
+        return result
+
+    async def _remember_published(self, session: AsyncSession, message_id: int) -> None:
+        """Note l'identifiant du message que l'on vient de publier.
+
+        Ne leve jamais : une trace manquante fait revenir le doublon, mais une
+        exception ici ferait echouer une publication reussie.
+        """
+        target = self._target
+        if target is None:
+            return
+        try:
+            session.add(
+                PublishedMessage(chat_id=int(target.identifier), message_id=int(message_id))
+            )
+            await session.flush()
+        except Exception as exc:
+            logger.warning(
+                "Message %s non enregistre comme publication propre : %s", message_id, exc
+            )
 
     async def _respect_interval(self) -> None:
         elapsed = time.monotonic() - self._last_sent_at
