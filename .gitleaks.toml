@@ -13,3 +13,18 @@ regexes = [
     '''^ya29\.jeton-de-test-tres-secret$''',
     '''^0123456789abcdef0123456789abcdef$''',
 ]
+
+# Une URL personnelle ngrok n'est pas une cle API, mais reste privee ici.
+# Seuls les six domaines fictifs deja utilises dans les exemples sont permis.
+[[rules]]
+id = "personal-ngrok-domain"
+description = "Domaine ngrok personnel a conserver dans la configuration locale"
+regex = '''(?i)\b([a-z0-9-]+\.ngrok(?:-free)?\.(?:app|dev|io))\b'''
+secretGroup = 1
+
+[[rules.allowlists]]
+description = "Domaines fictifs de documentation et de tests"
+regexTarget = "secret"
+regexes = [
+    '''^(?:exemple\.ngrok-free\.(?:app|dev)|(?:mon-domaine|quelque-chose|tradepilot-xyz|votre-domaine)\.ngrok-free\.app)$''',
+]
