@@ -35,9 +35,15 @@ BASE = datetime(2026, 9, 14, tzinfo=UTC)
 class BrokerSimule:
     """Courtier minimal : bougies fournies, modifications enregistrees."""
 
-    def __init__(self, symbol: SymbolInfo, candles: list[Candle] | None = None) -> None:
+    def __init__(
+        self,
+        symbol: SymbolInfo,
+        candles: list[Candle] | None = None,
+        prix: float = 0.0,
+    ) -> None:
         self._symbol = symbol
         self._candles = candles if candles is not None else []
+        self._prix = prix
         self.modifications: list[tuple[int, float | None, float | None]] = []
         self.candles_demandees: list[tuple[str, str, int]] = []
 
@@ -53,7 +59,7 @@ class BrokerSimule:
         return list(self._candles)
 
     async def symbol_tick(self, symbol: str) -> Tick:
-        return Tick(symbol=symbol, bid=0.0, ask=0.0)
+        return Tick(symbol=symbol, bid=self._prix, ask=self._prix)
 
     async def modify_position(
         self, ticket: int, stop_loss: float | None, take_profit: float | None
@@ -213,11 +219,16 @@ class TestResserrementSelonProfit:
         return broker, trade
 
     async def test_gain_modeste_laisse_respirer(self, session) -> None:
-        """A 1 R de gain, on garde la distance large de 1,5 ATR."""
-        broker, trade = self._materiel(1.15050)
-        await trailer(session, broker, trade, reglages(), prix=1.15050)
+        """Sous le seuil de resserrement, on garde la distance large.
+
+        A 1,8 R : assez haut pour que 1,5 ATR laisse le stop au-dessus de
+        l'entree, pas assez pour declencher le resserrement prevu a 2 R. En
+        dessous, c'est le plancher du point mort qui parle, pas le multiple.
+        """
+        broker, trade = self._materiel(1.15090)
+        await trailer(session, broker, trade, reglages(), prix=1.15090)
         _, stop, _ = broker.modifications[0]
-        assert 1.15050 - stop == pytest.approx(0.00075, abs=1e-5)
+        assert 1.15090 - stop == pytest.approx(0.00075, abs=1e-5)
 
     async def test_gain_installe_resserre_la_distance(self, session) -> None:
         """A 3 R, on protege davantage : 0,75 ATR."""
@@ -350,21 +361,134 @@ class TestDegradations:
 # Break-even automatique
 # ---------------------------------------------------------------------------
 class TestBreakEvenAutomatique:
-    def test_le_declencheur_tp1_hit_n_est_pas_automatique(self, session) -> None:
-        """Piege de configuration : ce declencheur attend un message du canal.
+    def _reglages_break_even(self, trigger: BreakEvenTrigger) -> RiskSettings:
+        return reglages(
+            trailing_mode=TrailingMode.DISABLED,
+            break_even_enabled=True,
+            break_even_trigger=trigger,
+            break_even_offset_points=5,
+        )
 
-        C'est le reglage qui etait en place : le break-even ne se declenchait
-        donc jamais tout seul, quel que soit le profit.
+    async def test_le_declencheur_tp1_hit_part_des_qu_un_objectif_est_franchi(
+        self, session
+    ) -> None:
+        """Un canal muet ne doit pas laisser le stop sous le prix d'entree.
+
+        C'etait le reglage en place : le break-even attendait un message de
+        suivi, alors que les objectifs franchis sont aussi constates sur le
+        prix. Le stop ne bougeait donc jamais, quel que soit le profit.
         """
-        from app.services.trading import position_manager
+        info = symbole("EURUSDm", 5, 0.00001)
+        broker = BrokerSimule(info, bougies(0.00050, 1.15000), prix=1.15055)
+        trade = position(stop_loss=1.14950, initial_stop_loss=1.14950)
+        trade.tp_index = 1
 
-        source = position_manager.__file__
-        with open(source, encoding="utf-8") as handle:
-            code = handle.read()
-        assert "if trigger is BreakEvenTrigger.SIGNAL_ONLY or trigger is BreakEvenTrigger.TP1_HIT" in code
+        await PositionManager(broker).apply_automatic_rules(
+            session, self._reglages_break_even(BreakEvenTrigger.TP1_HIT), [trade]
+        )
+
+        assert broker.modifications == [(1, 1.15005, None)]
+        assert trade.break_even_applied is True
+
+    async def test_sans_objectif_franchi_le_declencheur_tp1_hit_ne_fait_rien(
+        self, session
+    ) -> None:
+        info = symbole("EURUSDm", 5, 0.00001)
+        broker = BrokerSimule(info, bougies(0.00050, 1.15000), prix=1.15055)
+        trade = position(stop_loss=1.14950, initial_stop_loss=1.14950)
+
+        await PositionManager(broker).apply_automatic_rules(
+            session, self._reglages_break_even(BreakEvenTrigger.TP1_HIT), [trade]
+        )
+
+        assert broker.modifications == []
+        assert trade.break_even_applied is False
+
+    async def test_le_declencheur_signal_only_attend_toujours_le_canal(
+        self, session
+    ) -> None:
+        """Ce declencheur-la dit explicitement « seulement sur message »."""
+        info = symbole("EURUSDm", 5, 0.00001)
+        broker = BrokerSimule(info, bougies(0.00050, 1.15000), prix=1.15055)
+        trade = position(stop_loss=1.14950, initial_stop_loss=1.14950)
+        trade.tp_index = 1
+
+        await PositionManager(broker).apply_automatic_rules(
+            session, self._reglages_break_even(BreakEvenTrigger.SIGNAL_ONLY), [trade]
+        )
+
+        assert broker.modifications == []
 
     @pytest.mark.parametrize(
         "trigger", [BreakEvenTrigger.R_MULTIPLE, BreakEvenTrigger.POINTS]
     )
     def test_les_declencheurs_automatiques_existent(self, trigger: BreakEvenTrigger) -> None:
         assert trigger in set(BreakEvenTrigger)
+
+
+# ---------------------------------------------------------------------------
+# Le suiveur ne rend jamais le trade perdant
+# ---------------------------------------------------------------------------
+class TestPlancherPointMort:
+    """Un stop pose sous le prix d'entree n'est pas un suivi, c'est une perte.
+
+    Sans condition de depart, ATR_BASED et FIXED_DISTANCE resserraient le stop
+    des le premier tick, avant tout profit : le risque planifie d'une position
+    changeait tout seul. Le suivi ne prend le relais que lorsqu'il a quelque
+    chose a proteger, c'est-a-dire au-dessus du point mort.
+    """
+
+    def _materiel(self):
+        info = symbole("EURUSDm", 5, 0.00001)
+        broker = BrokerSimule(info, bougies(0.00050, 1.15000))
+        # Risque initial de 100 points, ATR de 50 points : a faible gain, la
+        # distance de 1,5 ATR laisse le candidat sous l'entree.
+        trade = position(open_price=1.15000, stop_loss=1.14900, initial_stop_loss=1.14900)
+        return broker, trade
+
+    async def test_en_atr_un_gain_trop_faible_ne_deplace_pas_le_stop(self, session) -> None:
+        broker, trade = self._materiel()
+
+        await trailer(session, broker, trade, reglages(), prix=1.15010)
+
+        assert broker.modifications == []
+        assert trade.stop_loss == 1.14900
+
+    async def test_en_distance_fixe_non_plus(self, session) -> None:
+        broker, trade = self._materiel()
+        settings = reglages(
+            trailing_mode=TrailingMode.FIXED_DISTANCE, trailing_distance_points=50
+        )
+
+        await trailer(session, broker, trade, settings, prix=1.15010)
+
+        assert broker.modifications == []
+        assert trade.stop_loss == 1.14900
+
+    async def test_des_que_le_stop_passe_au_dessus_de_l_entree_le_suivi_reprend(
+        self, session
+    ) -> None:
+        """Le relais se fait tout seul, sans reglage supplementaire."""
+        broker, trade = self._materiel()
+
+        await trailer(session, broker, trade, reglages(), prix=1.15100)
+
+        assert len(broker.modifications) == 1
+        _, stop, _ = broker.modifications[0]
+        assert stop > trade.open_price
+
+    async def test_une_vente_a_son_plancher_de_l_autre_cote(self, session) -> None:
+        """Pour une vente, proteger c'est descendre le stop sous l'entree."""
+        info = symbole("EURUSDm", 5, 0.00001)
+        broker = BrokerSimule(info, bougies(0.00050, 1.15000))
+        trade = position(
+            direction=Direction.SELL,
+            open_price=1.15000,
+            stop_loss=1.15100,
+            initial_stop_loss=1.15100,
+        )
+
+        await trailer(session, broker, trade, reglages(), prix=1.14990)
+
+        assert broker.modifications == []
+        assert trade.stop_loss == 1.15100

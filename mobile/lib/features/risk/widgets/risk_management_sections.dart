@@ -86,12 +86,35 @@ class RiskManagementSections extends StatelessWidget {
       label: 'Basé sur le risque',
       description: 'Le stop suit le prix par paliers exprimés en multiples du risque initial.',
     ),
+    RiskOption<String>(
+      value: 'ATR_BASED',
+      label: 'Adossé à la volatilité (ATR)',
+      description: 'La distance se mesure en multiples de l\'ATR de l\'instrument. Un même '
+          'réglage garde son sens sur l\'or comme sur l\'EURUSD, là où un nombre de points '
+          'convient à l\'un et pas à l\'autre.',
+    ),
+  ];
+
+  static const List<RiskOption<String>> _atrTimeframes = <RiskOption<String>>[
+    RiskOption<String>(value: 'M5', label: 'M5', description: 'Volatilité des 5 dernières minutes.'),
+    RiskOption<String>(
+      value: 'M15',
+      label: 'M15',
+      description: 'Bon compromis entre réactivité et bruit de marché.',
+    ),
+    RiskOption<String>(value: 'H1', label: 'H1', description: 'Suivi large, pour des trades lents.'),
+    RiskOption<String>(value: 'H4', label: 'H4', description: 'Suivi très large, positions longues.'),
   ];
 
   @override
   Widget build(BuildContext context) {
     final String trailingMode = draft.text('trailingMode') ?? 'DISABLED';
     final bool trailingActive = trailingMode != 'DISABLED';
+    // Les deux familles de réglages s'excluent : une distance en points ne
+    // veut rien dire en mode ATR, et un multiple d'ATR n'a pas de sens pour
+    // les autres modes. Afficher les deux invitait à régler celle qui ne sert
+    // à rien.
+    final bool suiviAtr = trailingMode == 'ATR_BASED';
     final bool breakEvenEnabled = draft.boolean('breakEvenEnabled');
     final String breakEvenTrigger = draft.text('breakEvenTrigger') ?? 'TP1_HIT';
 
@@ -187,7 +210,7 @@ class RiskManagementSections extends StatelessWidget {
               selected: trailingMode,
               onChanged: (String value) => controller.set('trailingMode', value),
             ),
-            if (trailingActive) ...<Widget>[
+            if (trailingActive && !suiviAtr) ...<Widget>[
               RiskNumberField(
                 key: const ValueKey<String>('trailingDistancePoints'),
                 label: 'Distance de suivi',
@@ -208,6 +231,56 @@ class RiskManagementSections extends StatelessWidget {
                 onChanged: (num? value) => controller.set('trailingStepPoints', value?.toInt()),
               ),
             ],
+            if (suiviAtr) ...<Widget>[
+              RiskNumberField(
+                key: const ValueKey<String>('trailingAtrMultiple'),
+                label: 'Distance normale',
+                description: 'Écart entre le prix et le stop tant que le gain reste modeste. '
+                    'Assez large pour ne pas se faire sortir par le bruit du marché.',
+                suffix: '× ATR',
+                value: draft.number('trailingAtrMultiple'),
+                onChanged: (num? value) => controller.set('trailingAtrMultiple', value),
+              ),
+              RiskNumberField(
+                key: const ValueKey<String>('trailingAtrTightMultiple'),
+                label: 'Distance resserrée',
+                description: 'Écart appliqué une fois le gain installé : on protège davantage '
+                    'ce qui est déjà acquis.',
+                suffix: '× ATR',
+                value: draft.number('trailingAtrTightMultiple'),
+                onChanged: (num? value) => controller.set('trailingAtrTightMultiple', value),
+              ),
+              RiskNumberField(
+                key: const ValueKey<String>('trailingTightenAfterR'),
+                label: 'Resserrer à partir de',
+                description: 'Gain, exprimé en multiples du risque initial, à partir duquel on '
+                    'passe à la distance resserrée.',
+                suffix: '× le risque',
+                value: draft.number('trailingTightenAfterR'),
+                onChanged: (num? value) => controller.set('trailingTightenAfterR', value),
+              ),
+              RiskNumberField(
+                key: const ValueKey<String>('trailingAtrPeriod'),
+                label: 'Période de l\'ATR',
+                description: 'Nombre de bougies utilisées pour mesurer la volatilité.',
+                suffix: 'bougies',
+                decimal: false,
+                value: draft.integer('trailingAtrPeriod'),
+                onChanged: (num? value) => controller.set('trailingAtrPeriod', value?.toInt()),
+              ),
+              RiskChoiceField<String>(
+                label: 'Unité de temps de l\'ATR',
+                description: 'Plus l\'unité est courte, plus le stop colle au prix.',
+                options: _atrTimeframes,
+                selected: draft.text('trailingAtrTimeframe') ?? 'M15',
+                onChanged: (String value) => controller.set('trailingAtrTimeframe', value),
+              ),
+            ],
+            const RiskNote(
+              text: 'Le suivi ne pose jamais un stop du mauvais côté du prix d\'entrée : tant '
+                  'qu\'il n\'y a rien à protéger, le stop d\'origine reste en place. C\'est le '
+                  'break even qui s\'occupe de tout ce qui vient avant.',
+            ),
           ],
         ),
         RiskSection(

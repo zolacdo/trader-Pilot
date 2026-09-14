@@ -19,10 +19,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel import SQLModel
 
 from app.config.logging_config import get_logger
+from app.models.enums import TrailingMode
 
 logger = get_logger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def _existing_columns(conn: Connection, table: str) -> set[str]:
@@ -173,8 +174,31 @@ def _migration_001(conn: Connection) -> None:
         conn.exec_driver_sql(statement)
 
 
+def _migration_002(conn: Connection) -> None:
+    """Active le suivi du stop sur les comptes restes sur l'ancien defaut.
+
+    ``DISABLED`` etait la valeur d'origine : le break even ramenait le stop a
+    l'entree une fois, puis plus rien ne bougeait, et un gain pouvait
+    redescendre entierement. Un compte qui a choisi un autre mode garde le
+    sien : seul l'ancien defaut bascule.
+
+    L'ordre compte. ``_sync_enum_values`` tourne avant les migrations
+    numerotees, donc ``ATR_BASED`` existe deja dans le type ENUM PostgreSQL
+    quand cette requete s'execute. Passer par la table de ``SQLModel`` plutot
+    que par du SQL brut laisse SQLAlchemy convertir la valeur selon le moteur,
+    la ou un parametre texte serait refuse par l'enum PostgreSQL.
+    """
+    table = SQLModel.metadata.tables["risk_settings"]
+    conn.execute(
+        table.update()
+        .where(table.c.trailing_mode == TrailingMode.DISABLED)
+        .values(trailing_mode=TrailingMode.ATR_BASED)
+    )
+
+
 MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     1: _migration_001,
+    2: _migration_002,
 }
 
 

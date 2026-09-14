@@ -100,6 +100,13 @@ def _stop_is_better(trade: TradeRecord, new_stop: float) -> bool:
     return new_stop < trade.stop_loss
 
 
+def _protege_au_moins_l_entree(trade: TradeRecord, new_stop: float) -> bool:
+    """Le stop laisse-t-il la position gagnante, ou au pire a l'equilibre ?"""
+    if trade.direction is Direction.BUY:
+        return new_stop >= trade.open_price
+    return new_stop <= trade.open_price
+
+
 class PositionManager:
     def __init__(self, service: MetaTraderService) -> None:
         self._service = service
@@ -453,7 +460,7 @@ class PositionManager:
         result: ManagementResult,
     ) -> None:
         trigger = settings.break_even_trigger
-        if trigger is BreakEvenTrigger.SIGNAL_ONLY or trigger is BreakEvenTrigger.TP1_HIT:
+        if trigger is BreakEvenTrigger.SIGNAL_ONLY:
             return  # declenche par le message du canal, pas automatiquement
 
         price = tick.bid if trade.direction is Direction.BUY else tick.ask
@@ -464,7 +471,15 @@ class PositionManager:
             return
 
         reached = False
-        if trigger is BreakEvenTrigger.POINTS and symbol.point > 0:
+        if trigger is BreakEvenTrigger.TP1_HIT:
+            # ``tp_index`` dit qu'un objectif est franchi, sans dire qui l'a
+            # constate. Ne partir que sur le message du canal laissait le stop
+            # sous l'entree des que le canal restait muet : les objectifs lus
+            # sur le prix par ``_annoncer_objectifs`` etaient annonces mais
+            # sans effet. Constate le 14/09/2026 sur XAUUSDm, TP2 sur 6
+            # franchi et stop toujours a sa valeur d'origine.
+            reached = trade.tp_index >= 1
+        elif trigger is BreakEvenTrigger.POINTS and symbol.point > 0:
             reached = progress / symbol.point >= settings.break_even_points
         elif trigger is BreakEvenTrigger.R_MULTIPLE and trade.initial_stop_loss is not None:
             risk = abs(trade.open_price - trade.initial_stop_loss)
@@ -505,6 +520,14 @@ class PositionManager:
         candidate = round(candidate, symbol.digits)
 
         if not _stop_is_better(trade, candidate):
+            return
+        # Un stop pose du mauvais cote de l'entree n'est pas un suivi : il
+        # reduit en silence le risque planifie d'une position qui n'a encore
+        # rien acquis. Aucun mode n'avait cette garde ; ATR_BASED et
+        # FIXED_DISTANCE resserraient donc des le premier tick, meme en perte.
+        # Le suiveur ne prend le relais qu'une fois le point mort depasse : ce
+        # qui vient avant est l'affaire du break even.
+        if not _protege_au_moins_l_entree(trade, candidate):
             return
         if trade.stop_loss is not None:
             step = self._trailing_step(settings, symbol, distance)

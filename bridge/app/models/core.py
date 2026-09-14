@@ -196,7 +196,11 @@ class RiskSettings(SQLModel, table=True):
     break_even_offset_points: int = Field(default=5)
 
     # --- trailing stop ---
-    trailing_mode: TrailingMode = Field(default=TrailingMode.DISABLED)
+    # Le suivi est actif d'origine : sans lui, un gain acquis pouvait
+    # redescendre entierement jusqu'au stop de depart. ATR_BASED plutot que des
+    # points, parce qu'un nombre de points ne garde pas son sens d'un
+    # instrument a l'autre (voir TrailingMode.ATR_BASED).
+    trailing_mode: TrailingMode = Field(default=TrailingMode.ATR_BASED)
     trailing_distance_points: int = Field(default=200)
     trailing_step_points: int = Field(default=50)
 

@@ -312,4 +312,58 @@ void main() {
     expect(find.text('Comme le téléphone'), findsOneWidget);
     expect(find.text('Bridge hors ligne'), findsOneWidget);
   });
+
+  // Le suivi adossé à l'ATR existait côté Bridge et côté API, mais le
+  // formulaire ne le proposait pas : le seul mode capable de suivre un gain
+  // sur n'importe quel instrument était injoignable depuis le téléphone.
+  Future<void> pumpSuivi(WidgetTester tester, String mode) async {
+    final RiskFormController controller = RiskFormController(ApiClient());
+    final RiskDraft draft = RiskDraft(original: <String, dynamic>{
+      'trailingMode': mode,
+      'trailingDistancePoints': 200,
+      'trailingStepPoints': 50,
+      'trailingAtrMultiple': 1.5,
+      'trailingAtrTightMultiple': 0.75,
+      'trailingTightenAfterR': 2.0,
+      'trailingAtrPeriod': 14,
+      'trailingAtrTimeframe': 'M15',
+      'multiTpStrategy': 'PARTIAL_CLOSE',
+      'breakEvenEnabled': true,
+      'breakEvenTrigger': 'TP1_HIT',
+      'paperBalance': 10000.0,
+      'paperCurrency': 'USD',
+    });
+    await _pump(
+      tester,
+      Scaffold(
+        body: SingleChildScrollView(
+          child: RiskManagementSections(draft: draft, controller: controller),
+        ),
+      ),
+    );
+  }
+
+  testWidgets('le suivi adossé à la volatilité est proposable', (WidgetTester tester) async {
+    await pumpSuivi(tester, 'DISABLED');
+    expect(find.text('Adossé à la volatilité (ATR)'), findsOneWidget);
+  });
+
+  testWidgets('le mode ATR montre ses propres réglages', (WidgetTester tester) async {
+    await pumpSuivi(tester, 'ATR_BASED');
+    expect(find.text('Distance normale'), findsOneWidget);
+    expect(find.text('Distance resserrée'), findsOneWidget);
+    expect(find.text('Resserrer à partir de'), findsOneWidget);
+  });
+
+  testWidgets('le mode ATR masque les réglages en points', (WidgetTester tester) async {
+    await pumpSuivi(tester, 'ATR_BASED');
+    expect(find.text('Distance de suivi'), findsNothing);
+    expect(find.text('Pas de déplacement'), findsNothing);
+  });
+
+  testWidgets('les autres modes gardent les réglages en points', (WidgetTester tester) async {
+    await pumpSuivi(tester, 'FIXED_DISTANCE');
+    expect(find.text('Distance de suivi'), findsOneWidget);
+    expect(find.text('Distance normale'), findsNothing);
+  });
 }
