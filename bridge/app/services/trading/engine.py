@@ -245,6 +245,37 @@ class TradingEngine:
         channel: Channel | None = None,
         manual_override: bool = False,
     ) -> ProcessOutcome:
+        """Evalue et execute un signal. Un seul a la fois, par construction.
+
+        Les plafonds d'exposition — ``max_positions``,
+        ``max_positions_per_symbol``, ``max_total_exposure_lots`` — comparent
+        un compte de positions a une limite. Ils ne valent donc que si deux
+        signaux ne peuvent pas lire l'etat du compte en meme temps.
+
+        Le 14/09/2026, PARAMOUR a publie trois messages XAUUSD en quatre-vingt
+        -dix secondes. Les trois ont ete evalues en parallele, chacun a lu
+        « aucune position sur XAUUSDm », et trois positions se sont ouvertes
+        alors que ``max_positions_per_symbol`` valait 1. Deux portaient meme
+        le meme horodatage d'ouverture a la microseconde pres.
+
+        Le verrou est celui de la boucle de suivi : une evaluation ne peut pas
+        non plus tomber au milieu d'une reconciliation. Seule l'EXECUTION est
+        serialisee ; l'analyse du message, elle, reste concurrente, ce qui
+        importe car elle peut attendre une reponse d'IA.
+        """
+        async with self._lock:
+            return await self._process_signal(
+                session, signal, parsed, channel, manual_override
+            )
+
+    async def _process_signal(
+        self,
+        session: AsyncSession,
+        signal: Signal,
+        parsed: ParsedSignal | None = None,
+        channel: Channel | None = None,
+        manual_override: bool = False,
+    ) -> ProcessOutcome:
         parsed = parsed or pipeline.parsed_from_signal(signal)
         settings = await settings_repo.get_risk_settings(session)
         state = await settings_repo.get_trading_state(session)

@@ -23,6 +23,15 @@ PROTECTED_FIELDS = {"id", "updated_at"}
 
 
 async def get_settings(session: AsyncSession) -> AISettings:
+    """Reglages IA, crees a la premiere demande.
+
+    Deux appels vraiment simultanes sur une base NEUVE peuvent tenter
+    l'insertion en meme temps et l'un echouera. Le cas ne se produit qu'au
+    tout premier demarrage : ensuite la ligne existe et la lecture suffit.
+    Le corriger proprement demanderait un point de sauvegarde, dont le
+    comportement differe entre SQLite et PostgreSQL. Laisse tel quel,
+    sciemment, plutot que de fragiliser un chemin traverse par chaque message.
+    """
     settings = await session.get(AISettings, SINGLETON_ID)
     if settings is None:
         settings = AISettings(id=SINGLETON_ID)
