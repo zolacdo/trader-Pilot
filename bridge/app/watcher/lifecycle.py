@@ -297,6 +297,9 @@ class LifecycleTracker:
         """Applique le changement, l'enregistre, et le publie si demande."""
         previous = signal.status
         signal.status = status
+        # Initialise avant la cloture : l'ecriture du post-mortem est
+        # volontairement faillible, et le message se compose dans tous les cas.
+        lesson: str | None = None
 
         # Un objectif franchi n'est pas qu'une annonce : la position reelle y
         # encaisse sa tranche et voit son stop remonter. Le suivi fait de meme,
@@ -316,14 +319,15 @@ class LifecycleTracker:
             # des autres signaux ne doit pas dependre de cette ecriture.
             with contextlib.suppress(Exception):
                 position = await repository.matching_trade(session, signal)
-                await repository.record_post_mortem(session, signal, position)
+                trace = await repository.record_post_mortem(session, signal, position)
+                lesson = trace.lesson if trace is not None else None
 
         if signal.id is not None:
             await repository.add_event(session, signal.id, status, price=price, detail=detail)
 
         update = SignalUpdate(signal=signal, status=status, price=price, detail=detail)
         if config.send_signal_updates:
-            text = formatter.lifecycle_message(signal, status, price, detail)
+            text = formatter.lifecycle_message(signal, status, price, detail, lesson)
             result = await self._publisher.publish(session, text, config)
             update.published = result.sent
             if result.sent and signal.id is not None:

@@ -263,7 +263,11 @@ def watch_confirmed_message(
 
 
 def lifecycle_message(
-    signal: WatcherSignal, status: WatcherStatus, hit_price: float | None, detail: str = ""
+    signal: WatcherSignal,
+    status: WatcherStatus,
+    hit_price: float | None,
+    detail: str = "",
+    lesson: str | None = None,
 ) -> str:
     """Mise a jour d'un signal deja publie (CDC3 section 32)."""
     emoji, label = _STATUS_LABELS.get(status, ("ℹ️", status.value))
@@ -280,6 +284,10 @@ def lifecycle_message(
         lines.append(f"Resultat : <b>{signal.result_r:+.2f} R</b>")
     if detail:
         lines.extend(["", escape(detail)])
+    # Une perte analysee en base et invisible n'apprend rien a personne : la
+    # lecon accompagne l'annonce, la ou elle sera lue.
+    if lesson:
+        lines.extend(["", f"<i>{escape(lesson)}</i>"])
     return "\n".join(lines)
 
 

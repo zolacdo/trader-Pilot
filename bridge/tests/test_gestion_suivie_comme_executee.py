@@ -141,6 +141,54 @@ async def test_stop_apres_tp1_ne_vaut_plus_moins_un(session, config: WatcherConf
     assert signal.result_r == pytest.approx(0.415, abs=0.001)
 
 
+async def test_le_message_de_cloture_dit_ce_que_la_perte_apprend(
+    session, config: WatcherConfig
+) -> None:
+    """Une analyse ecrite en base et invisible n'apprend rien a personne."""
+    signal = make_signal()
+    await repository.add_signal(session, signal)
+
+    _, recorder = await suivre(
+        session, [candle(high=100.5, low=97.0, close=97.5)], config
+    )
+
+    assert signal.status is WatcherStatus.SL_HIT
+    assert "Excursion favorable" in recorder.messages[-1]
+
+
+async def test_un_gain_ne_porte_aucune_lecon(session, config: WatcherConfig) -> None:
+    """La lecon est le fruit d'un post-mortem, et un gain n'en produit pas.
+
+    Un tour ne franchit qu'une transition : l'echelle se parcourt donc en
+    trois passes, ce qui verifie au passage que chaque objectif encaisse bien
+    sa tranche.
+    """
+    signal = make_signal()
+    await repository.add_signal(session, signal)
+
+    _, recorder = await suivre(session, [candle(high=102.5, low=99.5, close=102.2)], config)
+    await suivre(
+        session,
+        [candle(high=104.5, low=102.0, close=104.2, minute=5)],
+        config,
+        minutes=40,
+        recorder=recorder,
+    )
+    await suivre(
+        session,
+        [candle(high=106.5, low=104.0, close=106.2, minute=9)],
+        config,
+        minutes=50,
+        recorder=recorder,
+    )
+
+    assert signal.status is WatcherStatus.TP3_HIT
+    # 40 % a 1 R, 30 % a 2 R, 30 % a 3 R = 1,90 R, et non les 3 R d'une
+    # position entiere qui n'a jamais ete portee jusqu'au bout.
+    assert signal.result_r == pytest.approx(1.9, abs=0.001)
+    assert "Excursion favorable" not in recorder.messages[-1]
+
+
 async def test_un_signal_jamais_gere_vaut_toujours_moins_un(
     session, config: WatcherConfig
 ) -> None:
