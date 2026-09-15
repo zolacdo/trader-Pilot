@@ -30,7 +30,6 @@ Deux choix assumes, tous deux pessimistes :
 
 from __future__ import annotations
 
-import contextlib
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -315,12 +314,18 @@ class LifecycleTracker:
         ):
             signal.closed_at = utcnow()
             signal.result_r = _result_in_r(signal, status, previous, price)
-            # Une perte laisse sa trace analysable. Jamais bloquant : le suivi
-            # des autres signaux ne doit pas dependre de cette ecriture.
-            with contextlib.suppress(Exception):
+            # Une perte laisse sa trace analysable. Non bloquant : le suivi des
+            # autres signaux ne doit pas dependre de cette ecriture. Mais un
+            # echec est journalise et non avale : une perte jamais analysee est
+            # exactement ce qu'il faut voir.
+            try:
                 position = await repository.matching_trade(session, signal)
                 trace = await repository.record_post_mortem(session, signal, position)
                 lesson = trace.lesson if trace is not None else None
+            except Exception as exc:
+                logger.warning(
+                    "Post-mortem du signal %s impossible : %s", signal.id, exc
+                )
 
         if signal.id is not None:
             await repository.add_event(session, signal.id, status, price=price, detail=detail)

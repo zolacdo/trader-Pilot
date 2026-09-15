@@ -285,13 +285,17 @@ class WatcherScheduler:
             depeches = await news_repo.purge_unimportant(
                 session, utcnow() - timedelta(hours=NEWS_RETENTION_HOURS)
             )
-            # L'apprentissage ecarte ce qui n'a jamais gagne. Jamais bloquant :
+            # L'apprentissage ecarte ce qui n'a jamais gagne. Non bloquant :
             # une panne de sa part ne doit pas suspendre l'entretien, qui est
-            # le seul a borner la croissance des tables.
-            with contextlib.suppress(Exception):
+            # le seul a borner la croissance des tables. Mais elle est
+            # JOURNALISEE, pas avalee : « rien en silence » vaut aussi pour ses
+            # propres pannes, sans quoi un defaut resterait invisible a jamais.
+            try:
                 config = await load_config(session)
                 for decision in await learning.review(session, config):
                     await self._publisher.publish(session, decision.message, config)
+            except Exception as exc:
+                logger.warning("Apprentissage sur les pertes impossible : %s", exc)
         self.state.maintenance.detail = (
             f"{removed} trace(s) d'analyse et {depeches} depeche(s) sans portee effacees"
         )
