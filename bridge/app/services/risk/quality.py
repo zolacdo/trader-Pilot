@@ -37,6 +37,14 @@ SPREAD_FULL_RATIO = 0.25
 # rejet a inventer.
 DEFAULT_QUALITY_FLOOR = 0.35
 
+# Borne haute du plancher. A 1,0, la borne basse devient aussi la borne haute :
+# les cinq facteurs sont calcules, ecrits dans le journal d'audit, puis jetes.
+# Le reglage eteignait donc la modulation en la laissant affichee active, et le
+# detail d'audit se contredisait -- « qualite 1.00 [...] (plus penalisant :
+# rendement_risque 0.50) ». Pour eteindre la modulation il y a
+# `dynamic_risk_enabled` ; un second chemin silencieux n'a pas lieu d'etre.
+MAX_QUALITY_FLOOR = 0.90
+
 
 def _clamp(value: float, low: float, high: float) -> float:
     return min(max(value, low), high)
@@ -178,7 +186,7 @@ def quality_multiplier(
     produit = 1.0
     for valeur in factors.values():
         produit *= valeur
-    quality = _clamp(produit, _clamp(floor, 0.0, 1.0), 1.0)
+    quality = _clamp(produit, _clamp(floor, 0.0, MAX_QUALITY_FLOOR), 1.0)
 
     # Le budget journalier restant est une contrainte DURE : il n'est jamais
     # plancheee. Le facteur est multiplicatif et non pris en minimum, sinon

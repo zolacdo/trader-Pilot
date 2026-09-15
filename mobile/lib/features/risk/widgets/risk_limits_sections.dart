@@ -31,6 +31,19 @@ class RiskLimitsSections extends StatelessWidget {
         '${Fmt.money(amount, currency: currency)} risqués par trade.';
   }
 
+  /// Traduit le plancher en pourcentage réel : c'est la seule lecture qui
+  /// empêche de le confondre avec un pourcentage de capital. Saisi à 1, il
+  /// éteignait la modulation en laissant l'interrupteur sur « activé ».
+  String _dynamicFloorExample() {
+    final double? percent = draft.number('riskPercent');
+    final double? floor = draft.number('dynamicRiskFloor');
+    if (percent == null || floor == null || floor <= 0) {
+      return 'Renseignez le risque par trade pour chiffrer l\'exemple.';
+    }
+    return 'Le plus mauvais signal prendra ${Fmt.percent(percent * floor)} '
+        'au lieu de ${Fmt.percent(percent)}.';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -64,9 +77,11 @@ class RiskLimitsSections extends StatelessWidget {
             if (draft.boolean('dynamicRiskEnabled', fallback: false))
               RiskNumberField(
                 label: 'Réduction maximale',
-                description: 'Plancher du dimensionnement : un signal jugé mauvais ne descend '
-                    'jamais sous cette fraction du risque configuré.',
+                description: 'Fraction du risque configuré au-dessous de laquelle un mauvais '
+                    'signal ne descend jamais. Entre 0,05 et 0,90 : plus le chiffre est bas, '
+                    'plus la modulation a de marge. 0,35 par défaut.',
                 value: draft.number('dynamicRiskFloor'),
+                example: _dynamicFloorExample(),
                 onChanged: (num? value) => controller.set('dynamicRiskFloor', value),
               ),
           ],

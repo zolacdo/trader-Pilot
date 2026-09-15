@@ -14,6 +14,7 @@ from app.models.enums import (
     TrailingMode,
 )
 from app.models.intelligence import AIMode
+from app.services.risk.quality import MAX_QUALITY_FLOOR
 
 
 class PairingRequest(BaseModel):
@@ -131,8 +132,11 @@ class RiskSettingsRequest(BaseModel):
         default=None, alias="dailyProfitTargetPercent", ge=0.1, le=100
     )
     dynamic_risk_enabled: bool | None = Field(default=None, alias="dynamicRiskEnabled")
+    # Borne haute a MAX_QUALITY_FLOOR et non a 1,0 : un plancher a 1,0
+    # neutralise la modulation en la laissant affichee active. Pour l'eteindre,
+    # `dynamicRiskEnabled`.
     dynamic_risk_floor: float | None = Field(
-        default=None, alias="dynamicRiskFloor", ge=0.05, le=1.0
+        default=None, alias="dynamicRiskFloor", ge=0.05, le=MAX_QUALITY_FLOOR
     )
     max_lot: float | None = Field(default=None, alias="maxLot", gt=0, le=100)
     max_positions: int | None = Field(default=None, alias="maxPositions", ge=1, le=50)
