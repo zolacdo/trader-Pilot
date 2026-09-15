@@ -2,6 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**État : implémenté le 2026-09-15.** Les trois tâches sont livrées et poussées
+sur `main` — `1901122` (comptabilité honnête), `63f46e4` (post-mortem),
+`e4750e6` (apprentissage borné). Les cases restent cochables pour relecture ;
+elles ne signalent pas du travail en attente.
+
 **Goal:** Le watcher compte ses résultats comme ils se produisent vraiment, analyse chaque perte, et écarte de lui-même ce qui ne gagne jamais.
 
 **Architecture:** Trois couches empilées, dans cet ordre obligatoire. La comptabilité de `lifecycle.py` s'aligne d'abord sur la gestion que `position_manager.py` applique déjà aux positions réelles ; un post-mortem est ensuite écrit à chaque perte, rapproché de la position réelle ; un module d'apprentissage lit enfin ces post-mortems et écrit ses décisions dans les réglages, bornes en main.

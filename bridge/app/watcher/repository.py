@@ -437,14 +437,23 @@ async def post_mortems(
 
 
 async def closed_signals(
-    session: AsyncSession, since: datetime | None = None
+    session: AsyncSession,
+    since: datetime | None = None,
+    strategy_version: str | None = None,
 ) -> list[WatcherSignal]:
-    """Signaux reellement denoues : ceux qui portent un resultat."""
+    """Signaux reellement denoues : ceux qui portent un resultat.
+
+    ``strategy_version`` restreint aux signaux mesures par la comptabilite
+    courante. Deux versions ne comptent pas pareil : melanger leurs resultats
+    donnerait une moyenne qui ne decrit aucune des deux.
+    """
     statement = select(WatcherSignal).where(
         WatcherSignal.result_r.is_not(None)  # type: ignore[union-attr]
     )
     if since is not None:
         statement = statement.where(WatcherSignal.created_at >= since)
+    if strategy_version is not None:
+        statement = statement.where(WatcherSignal.strategy_version == strategy_version)
     result = await session.execute(
         statement.order_by(WatcherSignal.created_at.desc())  # type: ignore[attr-defined]
     )

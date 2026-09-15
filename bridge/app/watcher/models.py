@@ -21,7 +21,12 @@ from sqlmodel import Field, SQLModel
 from app.models.core import normalize_datetime_columns, utcnow
 from app.models.enums import Direction
 
-STRATEGY_VERSION = "market_watcher_v1.0"
+# Passee a v1.1 le 15/09/2026 : le resultat suit desormais la gestion
+# reellement appliquee (fermeture partielle, break even) au lieu d'etre mesure
+# sur position entiere. Les signaux d'une version anterieure portent donc des
+# resultats calcules autrement, et l'apprentissage doit les ignorer -- sinon il
+# apprend sur des -1 R pleins qui n'ont jamais correspondu au compte.
+STRATEGY_VERSION = "market_watcher_v1.1"
 
 
 class WatcherDecision(StrEnum):

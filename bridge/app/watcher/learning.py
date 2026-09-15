@@ -27,6 +27,7 @@ from app.models.core import utcnow
 from app.services import journal
 from app.watcher import repository
 from app.watcher.config import WatcherConfig, update_config
+from app.watcher.models import STRATEGY_VERSION
 from app.watcher.performance import MIN_SAMPLE
 
 logger = get_logger(__name__)
@@ -65,7 +66,12 @@ async def review(session: AsyncSession, config: WatcherConfig) -> list[Decision]
         return []
 
     since = utcnow() - timedelta(days=max(1, config.learning_window_days))
-    closed = await repository.closed_signals(session, since=since)
+    # Uniquement la version courante : un signal mesure « sur position
+    # entiere » porte un -1 R plein la ou le compte avait encaisse sa tranche
+    # a TP1. Apprendre dessus reviendrait a apprendre sur du faux.
+    closed = await repository.closed_signals(
+        session, since=since, strategy_version=STRATEGY_VERSION
+    )
     traces = await repository.post_mortems(session, since=since)
 
     deja_ecartes = {str(item).upper() for item in config.disabled_entry_types or []}

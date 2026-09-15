@@ -13,12 +13,16 @@ import pytest
 from app.models.core import utcnow
 from app.watcher import learning, repository
 from app.watcher.config import WatcherConfig, invalidate_cache, load_config
-from app.watcher.models import EntryType, WatcherStatus
+from app.watcher.models import STRATEGY_VERSION, EntryType, WatcherStatus
 from tests.test_gestion_suivie_comme_executee import make_signal
 
 
 async def _denoue(
-    session, symbol: str, entry_type: EntryType, result_r: float = -1.0
+    session,
+    symbol: str,
+    entry_type: EntryType,
+    result_r: float = -1.0,
+    version: str = STRATEGY_VERSION,
 ) -> None:
     """Un signal clos, avec son post-mortem quand c'est une perte."""
     signal = make_signal(
@@ -28,6 +32,7 @@ async def _denoue(
         status=WatcherStatus.SL_HIT if result_r < 0 else WatcherStatus.TP3_HIT,
         result_r=result_r,
         created_at=utcnow(),
+        strategy_version=version,
     )
     await repository.add_signal(session, signal)
     await repository.record_post_mortem(session, signal)
@@ -82,6 +87,23 @@ async def test_un_instrument_non_surveille_ne_produit_aucune_decision(session) -
     for index in range(10):
         entree = EntryType.MARKET if index % 2 else EntryType.STOP
         await _denoue(session, "AUTREUSD", entree)
+
+    assert await learning.review(session, WatcherConfig()) == []
+
+
+async def test_les_signaux_d_une_version_precedente_sont_ignores(session) -> None:
+    """Leur resultat vient d'une comptabilite qui n'est plus la bonne.
+
+    Les 21 operations denouees avant le 15/09/2026 etaient mesurees « sur
+    position entiere » : un signal qui avait touche TP1 puis reflue y vaut
+    -1 R plein, alors que la position reelle avait encaisse 40 %. Apprendre
+    sur ces chiffres, c'est apprendre sur du faux -- precisement ce que le
+    spec interdit.
+    """
+    for _ in range(10):
+        await _denoue(
+            session, "BREAKUSD", EntryType.BREAKOUT, version="market_watcher_v1.0"
+        )
 
     assert await learning.review(session, WatcherConfig()) == []
 
