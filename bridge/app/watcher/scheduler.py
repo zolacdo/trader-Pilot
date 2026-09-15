@@ -29,7 +29,7 @@ from app.repositories import news_repo
 from app.services import journal
 from app.services.market_data.provider import market_engine
 from app.services.trading.symbol_resolver import SymbolResolver
-from app.watcher import formatter, repository
+from app.watcher import formatter, learning, repository
 from app.watcher.config import WatcherConfig, load_config
 from app.watcher.engine import AnalysisOutcome, WatcherEngine
 from app.watcher.lifecycle import LifecycleTracker
@@ -285,6 +285,13 @@ class WatcherScheduler:
             depeches = await news_repo.purge_unimportant(
                 session, utcnow() - timedelta(hours=NEWS_RETENTION_HOURS)
             )
+            # L'apprentissage ecarte ce qui n'a jamais gagne. Jamais bloquant :
+            # une panne de sa part ne doit pas suspendre l'entretien, qui est
+            # le seul a borner la croissance des tables.
+            with contextlib.suppress(Exception):
+                config = await load_config(session)
+                for decision in await learning.review(session, config):
+                    await self._publisher.publish(session, decision.message, config)
         self.state.maintenance.detail = (
             f"{removed} trace(s) d'analyse et {depeches} depeche(s) sans portee effacees"
         )

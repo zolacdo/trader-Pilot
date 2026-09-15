@@ -1,0 +1,130 @@
+"""L'apprentissage decide peu, tard, et jamais hors de ses bornes.
+
+Sur 21 operations denouees, tout ajustement fin ajusterait du bruit : la
+retenue est une exigence, pas une timidite. Les trois regles verrouillees ici
+sont celles du spec -- rien sous ``MIN_SAMPLE``, rien hors des bornes
+declarees, rien en silence.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from app.models.core import utcnow
+from app.watcher import learning, repository
+from app.watcher.config import WatcherConfig, invalidate_cache, load_config
+from app.watcher.models import EntryType, WatcherStatus
+from tests.test_gestion_suivie_comme_executee import make_signal
+
+
+async def _denoue(
+    session, symbol: str, entry_type: EntryType, result_r: float = -1.0
+) -> None:
+    """Un signal clos, avec son post-mortem quand c'est une perte."""
+    signal = make_signal(
+        symbol=symbol,
+        broker_symbol=symbol,
+        entry_type=entry_type,
+        status=WatcherStatus.SL_HIT if result_r < 0 else WatcherStatus.TP3_HIT,
+        result_r=result_r,
+        created_at=utcnow(),
+    )
+    await repository.add_signal(session, signal)
+    await repository.record_post_mortem(session, signal)
+
+
+@pytest.fixture(autouse=True)
+def _cache_propre():
+    """La configuration est memorisee : chaque test repart d'une lecture neuve."""
+    invalidate_cache()
+    yield
+    invalidate_cache()
+
+
+async def test_sous_le_minimum_rien_n_est_decide(session) -> None:
+    """Neuf pertes ne suffisent pas : on ne conclut pas sur du bruit."""
+    for _ in range(9):
+        await _denoue(session, "BREAKUSD", EntryType.BREAKOUT)
+
+    assert await learning.review(session, WatcherConfig()) == []
+
+
+async def test_dix_pertes_sans_un_gain_ecartent_le_type_d_entree(session) -> None:
+    for _ in range(10):
+        await _denoue(session, "BREAKUSD", EntryType.BREAKOUT)
+
+    decisions = await learning.review(session, WatcherConfig())
+
+    assert [decision.key for decision in decisions] == ["BREAKOUT"]
+    assert decisions[0].kind == "entry_type"
+    assert decisions[0].losses == 10
+    config = await load_config(session, refresh=True)
+    assert "BREAKOUT" in config.disabled_entry_types
+
+
+async def test_un_instrument_surveille_sort_de_la_liste(session) -> None:
+    """Les types d'entree alternent : seul l'instrument atteint le minimum."""
+    for index in range(10):
+        entree = EntryType.MARKET if index % 2 else EntryType.STOP
+        await _denoue(session, "BTCUSD", entree)
+
+    decisions = await learning.review(session, WatcherConfig())
+
+    assert [decision.key for decision in decisions] == ["BTCUSD"]
+    assert decisions[0].kind == "symbol"
+    config = await load_config(session, refresh=True)
+    assert "BTCUSD" not in config.symbols
+    assert "XAUUSD" in config.symbols, "les autres instruments restent surveilles"
+
+
+async def test_un_instrument_non_surveille_ne_produit_aucune_decision(session) -> None:
+    """On n'ecarte pas ce qui n'est pas dans la liste : la decision serait vide."""
+    for index in range(10):
+        entree = EntryType.MARKET if index % 2 else EntryType.STOP
+        await _denoue(session, "AUTREUSD", entree)
+
+    assert await learning.review(session, WatcherConfig()) == []
+
+
+async def test_un_seul_gain_suffit_a_ne_rien_ecarter(session) -> None:
+    """Une clef qui a gagne une fois n'est pas sterile."""
+    for _ in range(9):
+        await _denoue(session, "BREAKUSD", EntryType.BREAKOUT)
+    await _denoue(session, "BREAKUSD", EntryType.BREAKOUT, result_r=3.0)
+
+    assert await learning.review(session, WatcherConfig()) == []
+
+
+async def test_apprentissage_coupe_ne_decide_rien(session) -> None:
+    for _ in range(10):
+        await _denoue(session, "BREAKUSD", EntryType.BREAKOUT)
+    config = WatcherConfig()
+    config.learning_enabled = False
+
+    assert await learning.review(session, config) == []
+
+
+def test_un_parametre_sans_borne_declaree_n_est_pas_ecrit() -> None:
+    """Regle 2 du spec : une borne absente vaut interdiction d'ecrire."""
+    config = WatcherConfig()
+    config.learning_bounds = {}
+
+    assert learning.clamp(config, "minimum_score", 95.0) is None
+
+
+def test_une_valeur_est_ramenee_dans_ses_bornes() -> None:
+    config = WatcherConfig()
+    config.learning_bounds = {"minimum_score": [65.0, 80.0]}
+
+    assert learning.clamp(config, "minimum_score", 95.0) == pytest.approx(80.0)
+    assert learning.clamp(config, "minimum_score", 10.0) == pytest.approx(65.0)
+    assert learning.clamp(config, "minimum_score", 72.0) == pytest.approx(72.0)
+
+
+def test_les_bornes_du_yaml_survivent_a_la_conversion() -> None:
+    """Les valeurs sont des listes, pas des nombres : la conversion doit suivre."""
+    from app.watcher.config import _coerce
+
+    converti = _coerce("learning_bounds", {"minimum_score": [65, 80]}, {})
+
+    assert converti == {"minimum_score": [65.0, 80.0]}

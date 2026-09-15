@@ -142,6 +142,19 @@ class WatcherConfig:
 
     weights: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_WEIGHTS))
 
+    # --- apprentissage sur les pertes (CDC3 section 41) ---
+    # Il n'ecarte qu'une clef sans un seul gain, et n'ajuste jamais un
+    # parametre dont la borne n'est pas ecrite ici : sans limite declaree,
+    # rien ne dit jusqu'ou il aurait le droit d'aller.
+    learning_enabled: bool = True
+    learning_window_days: int = 30
+    learning_bounds: dict[str, list[float]] = field(
+        default_factory=lambda: {"minimum_score": [65.0, 80.0], "minimum_rr": [1.2, 2.5]}
+    )
+    # Types d'entree ecartes par l'apprentissage. Se defait depuis l'app :
+    # une decision n'est qu'un reglage, jamais du code.
+    disabled_entry_types: list[str] = field(default_factory=list)
+
     @property
     def simple_format(self) -> bool:
         return self.telegram_format.strip().lower() == "simple"
@@ -217,6 +230,23 @@ def _coerce(name: str, raw: Any, current: Any) -> Any:
     """
     declared = str(_FIELD_TYPES.get(name, ""))
     try:
+        # Traite avant les branches generiques : son type declare
+        # ``dict[str, list[float]]`` contient « list », donc la conversion des
+        # listes le capturerait et les bornes du YAML seraient perdues en
+        # silence. Ses valeurs sont des paires, pas des nombres.
+        if name == "learning_bounds":
+            if not isinstance(raw, dict):
+                return current
+            bornes: dict[str, list[float]] = {}
+            for key, value in raw.items():
+                if isinstance(value, (list, tuple)) and len(value) == 2:
+                    bornes[str(key)] = [float(value[0]), float(value[1])]
+                else:
+                    logger.warning(
+                        "Borne watcher.learning_bounds.%s ignoree : une paire est attendue.",
+                        key,
+                    )
+            return bornes
         if "bool" in declared:
             if isinstance(raw, bool):
                 return raw

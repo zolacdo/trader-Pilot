@@ -377,7 +377,7 @@ async def matching_trade(session: AsyncSession, signal: WatcherSignal) -> Any | 
         .where(TradeRecord.symbol == signal.broker_symbol)
         .where(TradeRecord.direction == signal.direction)
         .where(TradeRecord.opened_at >= depuis)
-        .order_by(TradeRecord.opened_at)
+        .order_by(TradeRecord.opened_at.asc())  # type: ignore[attr-defined]
         .limit(1)
     )
     return await session.scalar(statement)
@@ -430,7 +430,9 @@ async def post_mortems(
     statement = select(WatcherPostMortem)
     if since is not None:
         statement = statement.where(WatcherPostMortem.created_at >= since)
-    result = await session.execute(statement.order_by(WatcherPostMortem.created_at.desc()))
+    result = await session.execute(
+        statement.order_by(WatcherPostMortem.created_at.desc())  # type: ignore[attr-defined]
+    )
     return list(result.scalars())
 
 
@@ -438,10 +440,14 @@ async def closed_signals(
     session: AsyncSession, since: datetime | None = None
 ) -> list[WatcherSignal]:
     """Signaux reellement denoues : ceux qui portent un resultat."""
-    statement = select(WatcherSignal).where(WatcherSignal.result_r.is_not(None))
+    statement = select(WatcherSignal).where(
+        WatcherSignal.result_r.is_not(None)  # type: ignore[union-attr]
+    )
     if since is not None:
         statement = statement.where(WatcherSignal.created_at >= since)
-    result = await session.execute(statement.order_by(WatcherSignal.created_at.desc()))
+    result = await session.execute(
+        statement.order_by(WatcherSignal.created_at.desc())  # type: ignore[attr-defined]
+    )
     return list(result.scalars())
 
 

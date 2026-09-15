@@ -120,3 +120,22 @@ weights:
   sentiment: 10
   fundamental: 10
   risk_reward: 5
+
+# --- apprentissage sur les pertes --------------------------------------------
+# Chaque cloture perdante laisse un post-mortem. Une fois par heure, le
+# watcher les relit et ecarte ce qui n'a jamais gagne : un type d'entree ou un
+# instrument totalisant au moins 10 operations denouees sans un seul gain.
+#
+# Trois limites, volontaires :
+#   - rien n'est decide sous 10 operations denouees : plus tot, on ajusterait
+#     du bruit ;
+#   - un parametre absent de learning_bounds ne peut PAS etre ajuste. La borne
+#     manquante vaut interdiction, jamais permission ;
+#   - chaque decision est journalisee et publiee dans le canal.
+#
+# Une decision n'est qu'un reglage : elle se defait depuis l'application.
+learning_enabled: true
+learning_window_days: 30
+learning_bounds:
+  minimum_score: [65, 80]
+  minimum_rr: [1.2, 2.5]
