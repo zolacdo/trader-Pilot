@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.logging_config import get_logger
 from app.repositories import settings_repo
 from app.services.mt5.interface import MetaTraderService, SymbolInfo
-from app.services.signals.symbols import clean_token, strip_broker_suffix
+from app.services.signals.symbols import canonical_symbol, clean_token, strip_broker_suffix
 
 logger = get_logger(__name__)
 
@@ -26,11 +26,20 @@ CANDIDATE_SUFFIXES = ("", "m", "c", "z", "e", ".r", ".a", "micro", "_i", ".p", "
 # courtier a l'autre : le Nasdaq est USTEC chez Exness, NAS100 ailleurs. Sans
 # ces equivalences, un signal NAS100 ne trouve aucun symbole et part en
 # SYMBOL_NOT_FOUND alors que l'instrument est bien disponible.
+#
+# La CLE doit etre le nom canonique produit par ``canonical_symbol``, jamais
+# une de ses ecritures : ``resolve`` ne consulte ce dictionnaire que par
+# ``BROKER_ALIASES.get(canonical)``, donc une cle non canonique n'est jamais
+# atteinte. Deux entrees etaient ainsi mortes depuis l'origine -- ``US500``
+# alors que le canonique est ``SPX500``, et ``DE40`` alors qu'il est ``GER40``.
+# Un signal SPX500 partait en SYMBOL_NOT_FOUND le 15/09/2026 bien qu'Exness
+# expose ``US500m``. ``test_equivalences_indexees_sur_le_canonique`` verrouille
+# desormais cette contrainte pour toutes les entrees.
 BROKER_ALIASES: dict[str, tuple[str, ...]] = {
     "NAS100": ("USTEC", "NDX100", "USTECH", "NDX"),
     "US30": ("DJ30", "WS30", "DOW30", "USA30"),
-    "US500": ("SPX500", "SP500", "USA500"),
-    "DE40": ("GER40", "DAX40", "GER30", "DE30"),
+    "SPX500": ("US500", "SP500", "USA500"),
+    "GER40": ("DE40", "DAX40", "GER30", "DE30"),
     "UK100": ("FTSE100", "GB100"),
     "JP225": ("JPN225", "NIKKEI225"),
     "XAUUSD": ("GOLD",),
@@ -92,6 +101,15 @@ class SymbolResolver:
     ) -> ResolvedSymbol | None:
         """Retourne le symbole broker utilisable, ou None s'il n'existe pas."""
         canonical = canonical.upper()
+        # Tous les appelants ne passent pas un canonique : la recherche de
+        # symboles de l'API transmet la saisie brute. On ramene donc nous-memes
+        # « DE40 » sur « GER40 » plutot que de dependre de l'appelant, sans quoi
+        # les equivalences -- indexees sur le canonique -- restent hors portee.
+        # Un nom inconnu du normaliseur est conserve tel quel : il peut s'agir
+        # d'un symbole propre au courtier, que les etapes suivantes savent lire.
+        normalise = canonical_symbol(canonical)
+        if normalise:
+            canonical = normalise
 
         if canonical in self._cache:
             info = await self._service.symbol_info(self._cache[canonical])
