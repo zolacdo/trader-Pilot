@@ -288,6 +288,39 @@ class WatcherSignalEvent(SQLModel, table=True):
         }
 
 
+class WatcherPostMortem(SQLModel, table=True):
+    """Analyse d'une perte, pour ne pas la reproduire (CDC3 section 41).
+
+    Une table a part, et non un ``WatcherSignalEvent`` : les evenements
+    tracent des transitions, pas des analyses. L'unicite sur ``signal_id``
+    garantit qu'une perte n'est comptee qu'une fois, meme si le suivi repasse
+    sur un signal deja clos.
+    """
+
+    __tablename__ = "watcher_post_mortems"
+
+    id: int | None = Field(default=None, primary_key=True)
+    signal_id: int = Field(foreign_key="watcher_signals.id", unique=True, index=True)
+    symbol: str = Field(max_length=32, index=True)
+    direction: Direction
+    entry_type: EntryType
+    timeframe: str = Field(max_length=8)
+    score: float = Field(default=0.0)
+    # Sur quoi la decision s'appuyait, et ce qu'elle a ignore.
+    criteria_high: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    criteria_low: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    max_favorable_r: float = Field(default=0.0)
+    max_adverse_r: float = Field(default=0.0)
+    result_r: float | None = Field(default=None)
+    session_hour: int = Field(default=0)
+    # La position reelle, quand il y en a eu une : c'est elle qui dit ce que
+    # l'argent a fait. Nulle si aucun ordre n'est parti.
+    trade_id: int | None = Field(default=None, index=True)
+    trade_pnl: float | None = Field(default=None)
+    lesson: str | None = Field(default=None, max_length=300)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
 class WatcherAnalysis(SQLModel, table=True):
     """Trace de chaque analyse, publiee ou non (CDC3 sections 69 et 82).
 
@@ -346,6 +379,7 @@ __all__ = [
     "VolumeKind",
     "WatcherAnalysis",
     "WatcherDecision",
+    "WatcherPostMortem",
     "WatcherSignal",
     "WatcherSignalEvent",
     "WatcherStatus",

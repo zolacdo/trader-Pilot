@@ -24,6 +24,7 @@ Deux choix assumes, tous deux pessimistes :
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -305,6 +306,11 @@ class LifecycleTracker:
         ):
             signal.closed_at = utcnow()
             signal.result_r = _result_in_r(signal, status, previous, price)
+            # Une perte laisse sa trace analysable. Jamais bloquant : le suivi
+            # des autres signaux ne doit pas dependre de cette ecriture.
+            with contextlib.suppress(Exception):
+                position = await repository.matching_trade(session, signal)
+                await repository.record_post_mortem(session, signal, position)
 
         if signal.id is not None:
             await repository.add_event(session, signal.id, status, price=price, detail=detail)
