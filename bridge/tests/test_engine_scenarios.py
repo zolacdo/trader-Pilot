@@ -97,7 +97,12 @@ async def test_scenario_82_signal_complet_execute_en_paper(
     # 0.5 % de 10 000 = 50 USD ; 10 dollars de stop = 1000 USD/lot -> 0.05 lot
     assert signal.computed_lot == pytest.approx(0.05)
     assert signal.risk_amount == pytest.approx(50.0)
-    assert signal.risk_reward == pytest.approx(1.0)
+    # Le rendement se mesure sur la sortie reellement executee, pas sur TP1.
+    # En PARTIAL_CLOSE (le defaut), la position est portee jusqu'a TP2 avec une
+    # fermeture partielle a TP1 : (40 x 10 + 30 x 20) / 70 / 10 = 1,43.
+    # Juge sur TP1 seul il valait 1,0, ce qui decrivait une sortie que le
+    # systeme n'effectue pas.
+    assert signal.risk_reward == pytest.approx(1.4286, abs=0.001)
 
     # --- la position existe dans le simulateur ---
     positions = await paper.positions()

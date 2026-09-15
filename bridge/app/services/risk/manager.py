@@ -470,7 +470,9 @@ class RiskManager:
                 )
         ok("stop_side")
 
-        risk_reward = self._risk_reward(signal, entry_price)
+        risk_reward = self._risk_reward(
+            signal, entry_price, effective.multi_tp_strategy, effective.split_ratios
+        )
         if (
             effective.min_risk_reward is not None
             and risk_reward is not None
@@ -696,14 +698,44 @@ class RiskManager:
         return points_between(entry, stop, symbol) >= symbol.trade_stops_level
 
     @staticmethod
-    def _risk_reward(signal: ParsedSignal, entry_price: float) -> float | None:
+    def _risk_reward(
+        signal: ParsedSignal,
+        entry_price: float,
+        strategy: MultiTpStrategy = MultiTpStrategy.FIRST_TP_ONLY,
+        split_ratios: list[float] | None = None,
+    ) -> float | None:
+        """Rendement attendu de la sortie que le systeme executera vraiment.
+
+        Juger sur TP1 quelle que soit la strategie mesurait autre chose que ce
+        qui allait se passer. TP1 n'est le point de sortie que pour
+        ``FIRST_TP_ONLY`` : ``LAST_TP_ONLY`` porte tout au dernier objectif, et
+        ``PARTIAL_CLOSE`` comme ``SPLIT_POSITIONS`` sortent par tranches.
+
+        Le meme RiskManager dimensionnait deja sur ``weighted_risk_reward`` :
+        il refusait donc les trades sur une grandeur et les taillait sur une
+        autre. Mesure du 14/09/2026 sur les 65 signaux du jour d'un canal or en
+        ``PARTIAL_CLOSE`` 40/30/30 : aucun ne passait un seuil de 1,0 juge sur
+        TP1, alors que leur sortie reelle valait 0,63 de mediane. Un seuil pose
+        a 1,0 fermait le robot entier au lieu d'ecarter les mauvais signaux.
+        """
         if signal.stop_loss is None or not signal.take_profits:
             return None
         risk = abs(entry_price - signal.stop_loss)
         if risk <= 0:
             return None
-        reward = abs(signal.take_profits[0] - entry_price)
-        return reward / risk
+
+        if strategy is MultiTpStrategy.LAST_TP_ONLY:
+            return abs(signal.take_profits[-1] - entry_price) / risk
+        if strategy in (MultiTpStrategy.PARTIAL_CLOSE, MultiTpStrategy.SPLIT_POSITIONS):
+            pondere = weighted_risk_reward(
+                entry=entry_price,
+                stop_loss=signal.stop_loss,
+                take_profits=signal.take_profits,
+                split_ratios=split_ratios,
+            )
+            if pondere is not None:
+                return pondere
+        return abs(signal.take_profits[0] - entry_price) / risk
 
     @staticmethod
     def _check_daily_limits(context: RiskContext) -> tuple[RejectionReason, str] | None:
