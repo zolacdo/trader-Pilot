@@ -155,6 +155,11 @@ class PendingOrderRecord(SQLModel, table=True):
     price: float = Field(default=0.0)
     stop_loss: float | None = Field(default=None)
     take_profit: float | None = Field(default=None)
+    # Echelle complete des objectifs du signal. Le courtier n'accepte qu'un
+    # take profit par ordre, mais la position nee de cet ordre a besoin de
+    # toute l'echelle : sans elle, aucune fermeture partielle, ``tp_index``
+    # reste a zero et le break even declenche sur TP1 ne peut jamais partir.
+    take_profit_targets: list[float] = Field(default_factory=list, sa_column=Column(JSON))
     state: PositionState = Field(default=PositionState.PENDING, index=True)
     expires_at: datetime | None = Field(default=None)
     created_at: datetime = Field(default_factory=utcnow, index=True)

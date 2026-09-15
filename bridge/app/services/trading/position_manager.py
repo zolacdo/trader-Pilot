@@ -675,6 +675,34 @@ class PositionManager:
             )
         return remplis
 
+    @staticmethod
+    async def _echelle_objectifs(session: AsyncSession, order: Any) -> list[float]:
+        """Objectifs intermediaires a confier a la position, dans l'ordre.
+
+        Le courtier n'accepte qu'un take profit par ordre : l'echelle complete
+        ne vit que de notre cote. Elle manquait a la promotion, et la position
+        naissait donc avec une liste vide -- donc sans fermeture partielle,
+        donc avec ``tp_index`` bloque a zero, donc sans break even possible en
+        mode ``TP1_HIT``. Constate le 14/09/2026 : les cinq pertes issues
+        d'ordres en attente portaient toutes une echelle vide et un stop
+        toujours egal a son origine.
+
+        Deux sources, dans cet ordre. L'ordre lui-meme, qui porte ce qui a ete
+        reellement envoye ; a defaut le signal d'origine, ce qui repare les
+        ordres poses avant ce correctif et encore en attente.
+        """
+        depuis_ordre = getattr(order, "take_profit_targets", None)
+        if depuis_ordre:
+            return list(depuis_ordre)
+
+        signal_id = getattr(order, "signal_id", None)
+        if signal_id is None:
+            return []
+        signal = await session.get(Signal, signal_id)
+        if signal is None or not signal.take_profits:
+            return []
+        return list(signal.take_profits)
+
     async def _promote_order(
         self,
         session: AsyncSession,
@@ -711,6 +739,7 @@ class PositionManager:
             # sur XAUUSDm #3223262501, dont le stop ne pouvait pas remonter.
             initial_stop_loss=order.stop_loss,
             take_profit=order.take_profit,
+            take_profit_targets=await self._echelle_objectifs(session, order),
             profit=position.profit,
             state=PositionState.OPEN,
             opened_at=position.opened_at or utcnow(),

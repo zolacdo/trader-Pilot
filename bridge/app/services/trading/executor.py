@@ -325,6 +325,10 @@ class OrderExecutor:
                 price=order.price,
                 stop_loss=order.stop_loss,
                 take_profit=order.take_profit,
+                # L'ordre emporte son echelle : la position qui en naitra ne
+                # peut plus la deviner autrement, et sans elle toute la gestion
+                # automatique reste eteinte.
+                take_profit_targets=list(targets),
                 state=PositionState.PENDING,
                 comment=f"{COMMENT_PREFIX}{signal.id}",
             )
