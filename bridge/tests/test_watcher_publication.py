@@ -253,6 +253,57 @@ class TestCycleDeVie:
         )
         assert signal.status is WatcherStatus.EXPIRED
 
+    async def test_expiration_en_position_chiffre_la_sortie(
+        self, session, config: WatcherConfig
+    ) -> None:
+        """Une position encore ouverte vaut son dernier cours, pas rien.
+
+        Sans cela le message d'expiration ne dit ni a quel prix le signal se
+        termine ni ce qu'il rapporte, et la position est comptee comme si elle
+        n'avait jamais existe.
+        """
+        signal = make_signal(expires_at=BASE + timedelta(minutes=10))
+        recorder = Recorder()
+        tracker = LifecycleTracker(TelegramPublisher(sender=recorder))
+        await repository.add_signal(session, signal)
+        derniere = [
+            Candle(
+                time=BASE + timedelta(minutes=1),
+                open=100.0,
+                high=101.0,
+                low=99.5,
+                close=101.0,
+                tick_volume=10,
+            )
+        ]
+        await tracker.run_once(
+            session, FakeCandleEngine(derniere), config, now=BASE + timedelta(hours=1)
+        )
+        assert signal.status is WatcherStatus.EXPIRED
+        assert signal.result_r == pytest.approx(0.5)
+        assert "101.00" in recorder.messages[-1]
+
+    async def test_expiration_sans_declenchement_reste_sans_resultat(
+        self, session, config: WatcherConfig
+    ) -> None:
+        """Une entree jamais touchee n'est pas une operation (docstring du module)."""
+        signal = make_signal(
+            entry_type=EntryType.STOP,
+            status=WatcherStatus.CREATED,
+            expires_at=BASE + timedelta(minutes=10),
+        )
+        recorder = Recorder()
+        tracker = LifecycleTracker(TelegramPublisher(sender=recorder))
+        await repository.add_signal(session, signal)
+        await tracker.run_once(
+            session,
+            FakeCandleEngine(candles_reaching(high=99.5, low=98.5)),
+            config,
+            now=BASE + timedelta(hours=1),
+        )
+        assert signal.status is WatcherStatus.EXPIRED
+        assert signal.result_r is None
+
     async def test_excursion_maximale_est_mesuree(
         self, session, config: WatcherConfig
     ) -> None:

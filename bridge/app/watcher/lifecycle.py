@@ -168,15 +168,18 @@ class LifecycleTracker:
         # L'expiration ne se constate qu'en l'absence d'autre changement : un
         # signal qui vient de toucher son objectif n'est pas « expire ».
         if not updates and signal.is_open and self._expired(signal, now):
+            # Une position encore ouverte se termine au dernier cours connu.
+            # Sans ce prix, le message d'expiration ne dit ni ou le signal
+            # s'arrete ni ce qu'il rapporte.
+            en_position = not _pending(signal, signal.status)
+            sortie = relevant[-1].close if relevant and en_position else None
+            detail = (
+                "Duree de validite ecoulee : position close au dernier cours."
+                if en_position
+                else "Duree de validite ecoulee sans que l'entree soit declenchee."
+            )
             updates.append(
-                await self._apply(
-                    session,
-                    signal,
-                    WatcherStatus.EXPIRED,
-                    None,
-                    "Duree de validite ecoulee sans declenchement ni objectif atteint.",
-                    config,
-                )
+                await self._apply(session, signal, WatcherStatus.EXPIRED, sortie, detail, config)
             )
         if updates:
             session.add(signal)
@@ -204,10 +207,7 @@ class LifecycleTracker:
         """Premier changement d'etat constate, en parcourant les bougies dans l'ordre."""
         buy = signal.direction is Direction.BUY
         status = signal.status
-        pending = signal.entry_type in PENDING_ENTRIES and status in (
-            WatcherStatus.CREATED,
-            WatcherStatus.CONFIRMED,
-        )
+        pending = _pending(signal, status)
 
         for candle in candles:
             touched_entry = candle.low <= signal.entry <= candle.high
@@ -284,7 +284,7 @@ class LifecycleTracker:
             WatcherStatus.EXPIRED,
         ):
             signal.closed_at = utcnow()
-            signal.result_r = _result_in_r(signal, status, previous)
+            signal.result_r = _result_in_r(signal, status, previous, price)
 
         if signal.id is not None:
             await repository.add_event(session, signal.id, status, price=price, detail=detail)
@@ -309,8 +309,19 @@ class LifecycleTracker:
         return update
 
 
+def _pending(signal: WatcherSignal, status: WatcherStatus) -> bool:
+    """Vrai tant que le prix n'est pas venu chercher le declenchement."""
+    return signal.entry_type in PENDING_ENTRIES and status in (
+        WatcherStatus.CREATED,
+        WatcherStatus.CONFIRMED,
+    )
+
+
 def _result_in_r(
-    signal: WatcherSignal, status: WatcherStatus, previous: WatcherStatus
+    signal: WatcherSignal,
+    status: WatcherStatus,
+    previous: WatcherStatus,
+    price: float | None = None,
 ) -> float | None:
     """Resultat en unites de risque au moment de la cloture.
 
@@ -321,6 +332,10 @@ def _result_in_r(
     Un signal qui expire apres avoir touche TP1 ou TP2 garde en revanche le
     gain de l'objectif reellement atteint : l'objectif a bien ete touche, et
     l'oublier sous-estimerait la performance.
+
+    Une position encore ouverte a l'expiration est chiffree au dernier cours.
+    La laisser sans resultat la ferait disparaitre des statistiques alors
+    qu'elle a bel et bien ete prise.
     """
     if status is WatcherStatus.SL_HIT:
         return -1.0
@@ -331,6 +346,10 @@ def _result_in_r(
             return signal.risk_reward_2 or signal.risk_reward_1
         if previous is WatcherStatus.TP1_HIT:
             return signal.risk_reward_1
+        if price is not None and signal.risk_distance > 0 and not _pending(signal, previous):
+            buy = signal.direction is Direction.BUY
+            gain = (price - signal.entry) if buy else (signal.entry - price)
+            return round(gain / signal.risk_distance, 3)
     return None
 
 
