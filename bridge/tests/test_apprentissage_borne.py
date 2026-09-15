@@ -108,6 +108,37 @@ async def test_les_signaux_d_une_version_precedente_sont_ignores(session) -> Non
     assert await learning.review(session, WatcherConfig()) == []
 
 
+async def test_une_position_reelle_gagnante_empeche_le_bannissement(session) -> None:
+    """Le compte prime sur le suivi : c'est lui qui dit ce que l'argent a fait.
+
+    Le suivi ne modelise pas le trailing : son resultat est un plancher du
+    resultat reel. Un signal inscrit perdant peut donc correspondre a une
+    position sortie en gain une fois le stop remonte. Bannir sur le plancher
+    ecarterait un type d'entree qui gagne vraiment.
+    """
+    from app.models.enums import Direction, ExecutionMode, PositionState
+    from app.models.trading import TradeRecord
+
+    for index in range(10):
+        await _denoue(session, "BREAKUSD", EntryType.BREAKOUT)
+        if index == 0:
+            # Une seule position reellement gagnante suffit.
+            session.add(
+                TradeRecord(
+                    ticket=70000 + index,
+                    symbol="BREAKUSD",
+                    direction=Direction.BUY,
+                    state=PositionState.CLOSED,
+                    execution_mode=ExecutionMode.MT5_DEMO,
+                    realized_pnl=12.40,
+                    opened_at=utcnow(),
+                )
+            )
+            await session.flush()
+
+    assert await learning.review(session, WatcherConfig()) == []
+
+
 async def test_un_seul_gain_suffit_a_ne_rien_ecarter(session) -> None:
     """Une clef qui a gagne une fois n'est pas sterile."""
     for _ in range(9):

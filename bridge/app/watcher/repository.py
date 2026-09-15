@@ -383,6 +383,27 @@ async def matching_trade(session: AsyncSession, signal: WatcherSignal) -> Any | 
     return await session.scalar(statement)
 
 
+async def closed_trades_since(session: AsyncSession, since: datetime) -> list[Any]:
+    """Positions closes de la fenetre, triees par ouverture.
+
+    Meme exception en lecture seule que ``matching_trade``, et pour la meme
+    raison : savoir ce que l'argent a fait demande de lire ``trades``. Une
+    seule requete sert tous les signaux -- une par signal ferait N requetes
+    pour une question globale.
+    """
+    from app.models.enums import PositionState
+    from app.models.trading import TradeRecord
+
+    statement = (
+        select(TradeRecord)
+        .where(TradeRecord.state == PositionState.CLOSED)
+        .where(TradeRecord.opened_at >= since)
+        .order_by(TradeRecord.opened_at.asc())  # type: ignore[attr-defined]
+    )
+    result = await session.execute(statement)
+    return list(result.scalars())
+
+
 async def record_post_mortem(
     session: AsyncSession,
     signal: WatcherSignal,
@@ -464,6 +485,7 @@ __all__ = [
     "add_event",
     "add_signal",
     "closed_signals",
+    "closed_trades_since",
     "count_signals_since",
     "events_for",
     "get_signal",

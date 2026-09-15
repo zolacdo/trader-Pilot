@@ -7,7 +7,10 @@ Trois regles dont ce module ne sort jamais :
 2. aucune ecriture hors des bornes declarees dans la configuration. Un
    parametre sans borne ecrite ne peut pas etre touche du tout ;
 3. aucune decision silencieuse. Chaque ecriture est journalisee avec son
-   chiffrage, et l'ordonnanceur la publie dans le canal.
+   chiffrage, et l'ordonnanceur la publie dans le canal ;
+4. aucun bannissement sur la foi du seul suivi. Le suivi ne modelise pas le
+   trailing : son resultat est un plancher du resultat reel. Quand une
+   position existe dans ``trades``, c'est elle qui dit si le signal a gagne.
 
 Une decision n'est qu'un reglage en base : elle se defait depuis
 l'application, sans toucher au code. Et ce module ne connait pas le moteur
@@ -23,7 +26,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.logging_config import get_logger
-from app.models.core import utcnow
+from app.models.core import as_utc, utcnow
 from app.services import journal
 from app.watcher import repository
 from app.watcher.config import WatcherConfig, update_config
@@ -73,20 +76,27 @@ async def review(session: AsyncSession, config: WatcherConfig) -> list[Decision]
         session, since=since, strategy_version=STRATEGY_VERSION
     )
     traces = await repository.post_mortems(session, since=since)
+    # Le suivi ne modelise pas le trailing : son resultat est un plancher du
+    # resultat reel. On demande donc au compte, quand il a quelque chose a
+    # dire, avant de declarer une clef sterile.
+    trades = await repository.closed_trades_since(session, since)
+    gagnants = {
+        signal.id for signal in closed if signal.id is not None and _a_gagne(signal, trades)
+    }
 
     deja_ecartes = {str(item).upper() for item in config.disabled_entry_types or []}
     surveilles = {str(item).upper() for item in config.symbols or []}
 
     decisions = [
         decision
-        for decision in _sterile(closed, traces, "entry_type")
+        for decision in _sterile(closed, traces, "entry_type", gagnants)
         if decision.key not in deja_ecartes
     ]
     # Un instrument hors de la liste surveillee n'a pas a etre « ecarte » :
     # la decision serait vide, et le canal recevrait une annonce sans objet.
     decisions += [
         decision
-        for decision in _sterile(closed, traces, "symbol")
+        for decision in _sterile(closed, traces, "symbol", gagnants)
         if decision.key in surveilles
     ]
     if not decisions:
@@ -113,14 +123,45 @@ async def review(session: AsyncSession, config: WatcherConfig) -> list[Decision]
     return decisions
 
 
-def _sterile(closed: list[Any], traces: list[Any], kind: str) -> list[Decision]:
+def _a_gagne(signal: Any, trades: list[Any]) -> bool:
+    """Ce signal a-t-il gagne ? Le compte tranche s'il a quelque chose a dire.
+
+    L'appariement reprend la regle de ``matching_trade`` : meme symbole, meme
+    sens, position ouverte a partir du signal. Il est approximatif -- rien ne
+    relie ``trades`` a ``watcher_signals`` -- mais son erreur va dans un seul
+    sens : elle peut transformer une perte suivie en gain reel, jamais
+    l'inverse. Elle rend donc le bannissement plus prudent, ce qui est le bon
+    sens pour une action automatique.
+    """
+    reel = _real_pnl(signal, trades)
+    if reel is not None:
+        return reel > 0
+    return (signal.result_r or 0.0) > 0
+
+
+def _real_pnl(signal: Any, trades: list[Any]) -> float | None:
+    """P&L de la position nee de ce signal, ou ``None`` si aucun ordre n'est parti."""
+    created = as_utc(signal.created_at)
+    for trade in trades:
+        if trade.symbol != signal.broker_symbol or trade.direction is not signal.direction:
+            continue
+        opened = as_utc(trade.opened_at)
+        if created is not None and opened is not None and opened < created:
+            continue
+        return float(trade.realized_pnl or 0.0)
+    return None
+
+
+def _sterile(
+    closed: list[Any], traces: list[Any], kind: str, gagnants: set[int]
+) -> list[Decision]:
     """Clefs totalisant ``MIN_SAMPLE`` operations denouees sans un seul gain."""
     total: dict[str, int] = {}
     gains: dict[str, int] = {}
     for signal in closed:
         key = _key_of(signal, kind)
         total[key] = total.get(key, 0) + 1
-        if (signal.result_r or 0.0) > 0:
+        if signal.id in gagnants:
             gains[key] = gains.get(key, 0) + 1
 
     pertes: dict[str, int] = {}
