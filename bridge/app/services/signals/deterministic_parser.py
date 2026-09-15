@@ -114,6 +114,17 @@ class _Extraction:
 # deux-points par une espace et « 12:05 » devient alors deux nombres.
 _TIME_RE = re.compile(r"\b\d{1,2}\s*[:Hh]\s*[0-5]\d\b")
 
+# Annotations de rendement/risque : « (1:1.0) », « (1 : 2) », « R:R 1:3 ».
+#
+# Les deux formes sont volontairement etroites. Une regle generale « nombre
+# deux-points nombre » avalerait « TP1 : 1.15396 », c'est-a-dire l'objectif
+# lui-meme : la parenthese et le marqueur R:R sont ce qui distingue une
+# notation de ratio d'un simple separateur.
+_RATIO_RE = re.compile(
+    r"\(\s*\d+(?:[.,]\d+)?\s*:\s*\d+(?:[.,]\d+)?\s*\)"
+    r"|\bR\s*[:/]?\s*R\b\s*[:=]?\s*\d+(?:[.,]\d+)?\s*:\s*\d+(?:[.,]\d+)?"
+)
+
 # Au-dela de ce nombre de mots, un message sans stop ni objectif n'est plus un
 # ordre : c'est un article ou une publication pedagogique. Un vrai signal, meme
 # reduit a « BUY GOLD NOW », tient en quelques mots.
@@ -121,12 +132,18 @@ _PROSE_WORD_LIMIT = 60
 
 
 def _mask_times(text: str) -> str:
-    """Efface les horaires avant toute lecture de prix.
+    """Efface horaires et ratios avant toute lecture de prix.
 
     Sans cela, « 12:05 - EUR/USD - Sell » donnait une entree a 12,0 sur une
     paire qui cote 1,16.
+
+    Meme raison pour les ratios : « TP1 : 1.15396  (1:1.0) » livrait
+    ``[1.0, 2.0, 3.0, 1.15396, ...]``. Le filtre d'ordre de grandeur
+    (``_plausible``) ne pouvait rien voir -- sur une paire a 1,155, les
+    nombres 1, 2 et 3 sont exactement du bon ordre de grandeur. Le premier
+    objectif retenu tombait donc a 1,0, soit 1355 pips hors d'atteinte.
     """
-    return _TIME_RE.sub(" ", text)
+    return _RATIO_RE.sub(" ", _TIME_RE.sub(" ", text))
 
 
 def _numbers_in(text: str) -> list[float]:

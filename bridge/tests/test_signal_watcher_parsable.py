@@ -106,15 +106,23 @@ class TestFormatSimple:
 
 
 class TestFormatDetaille:
-    def test_il_reste_ambigu_et_c_est_pourquoi_on_ne_le_transmet_pas(self) -> None:
-        """Ce test documente le defaut, il ne demande pas de le corriger.
+    """Le format detaille se relit lui aussi, depuis que le parseur masque les ratios.
 
-        Le format detaille est fait pour etre lu par une personne : les
-        annotations de rendement y ont leur place. C'est sa transmission au
-        moteur qui etait fautive, pas sa mise en forme.
-        """
+    Transmettre le format simple au moteur reste la bonne decision -- on ne
+    donne pas a lire a une machine un texte ecrit pour l'oeil. Mais cela ne
+    protegeait que les signaux du watcher : un canal exterieur qui annote ses
+    objectifs de la meme facon restait mal lu, et c'est ce qui est arrive au
+    signal 128 du 14/09/2026. La cause est traitee dans le parseur.
+    """
+
+    def test_les_annotations_ne_deviennent_plus_des_objectifs(self) -> None:
         parsed = deterministic_parser.parse(formatter.detailed_signal(VENTE))
-        assert len(parsed.take_profits) > len(VENTE.targets)
+        assert parsed.take_profits == pytest.approx(VENTE.targets)
+
+    def test_le_validateur_l_accepte_desormais(self) -> None:
+        parsed = deterministic_parser.parse(formatter.detailed_signal(VENTE))
+        resultat = validator.validate(validator.sanitize(parsed))
+        assert resultat.ok, resultat.to_dict()
 
 
 class TestCablage:
