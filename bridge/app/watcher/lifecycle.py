@@ -20,6 +20,12 @@ Deux choix assumes, tous deux pessimistes :
   le gain encaisse au lieu d'etre compte -1 R. Mesurer « sur position
   entiere » decrivait une strategie sans sortie partielle, qui n'est plus
   celle qui s'execute. Le maximum favorable atteint est conserve a part.
+
+  Le trailing n'est PAS modelise ici, lui. Quand ``trailing_mode`` est actif,
+  le stop reel continue de suivre le prix alors que le stop suivi reste au
+  break even : le resultat calcule ici est alors un plancher du resultat
+  reel, jamais un plafond. L'ecart va donc dans le sens prudent, et
+  ``trades.realized_pnl`` reste la seule mesure de l'argent.
 """
 
 from __future__ import annotations
