@@ -35,6 +35,7 @@ from app.repositories import channel_repo, settings_repo, signal_repo, trade_rep
 from app.services import journal
 from app.services.events import EventType, event_bus
 from app.services.mt5.interface import MetaTraderService
+from app.services.risk.calculator import loss_for_one_lot
 from app.services.risk.manager import RiskContext, RiskDecision, RiskManager
 from app.services.signals import pipeline
 from app.services.signals.models import FollowUp, ParsedSignal
@@ -841,32 +842,86 @@ class TradingEngine:
 
             account = await service.account_info()
             if account is not None:
-                state = await settings_repo.ensure_day_rollover(session, account.balance)
-                if state.peak_equity is None or account.equity > state.peak_equity:
-                    state.peak_equity = account.equity
-                    await settings_repo.save_trading_state(session, state)
+                await settings_repo.ensure_day_rollover(session, account.balance)
                 event_bus.publish(EventType.ACCOUNT_UPDATED, account.to_dict())
 
             manager = PositionManager(service)
             closed = await manager.sync_with_broker(session, mode)
-            if closed:
-                await self._apply_closed_trades(session, closed)
+            clotures = list(closed or [])
+            if clotures:
+                await self._apply_closed_trades(session, clotures, service)
 
             open_trades = await trade_repo.open_trades(session, mode)
             if open_trades:
                 automatique = await manager.apply_automatic_rules(
                     session, settings, open_trades
                 )
-                if getattr(automatique, "closed", None):
-                    await self._apply_closed_trades(session, automatique.closed)
+                fermees = list(getattr(automatique, "closed", None) or [])
+                if fermees:
+                    clotures.extend(fermees)
+                    await self._apply_closed_trades(session, fermees, service)
                 total = sum(trade.profit for trade in open_trades)
                 event_bus.publish(
                     EventType.PNL_UPDATED,
                     {"openPositions": len(open_trades), "floatingPnl": round(total, 2)},
                 )
+
+            # Les reperes du jour se recalent une fois les clotures inscrites au
+            # compteur, et jamais pendant le cycle qui en a ferme une : le solde
+            # du courtier et ``day_realized_pnl`` ne basculent pas au meme
+            # instant, et l'ecart transitoire vaut exactement le resultat du
+            # trade. Le confondre avec un depot effacait ``day_start_balance``
+            # et ``peak_equity`` a chaque grosse perte -- voir
+            # ``reconcile_external_balance_move``. Un vrai mouvement d'argent
+            # est simplement detecte au cycle suivant, deux secondes plus tard.
+            if account is not None:
+                if not clotures:
+                    await settings_repo.reconcile_external_balance_move(
+                        session, account.balance
+                    )
+                state = await settings_repo.get_trading_state(session)
+                if state.peak_equity is None or account.equity > state.peak_equity:
+                    state.peak_equity = account.equity
+                    await settings_repo.save_trading_state(session, state)
+
             await self._expire_stale_signals(session)
 
-    async def _apply_closed_trades(self, session: AsyncSession, closed: list[Any]) -> None:
+    @staticmethod
+    async def risk_reference(service: MetaTraderService, trade: Any) -> float | None:
+        """Montant reellement risque a l'ouverture, en devise du compte.
+
+        C'est la seule definition de 1 R qui tienne : le resultat d'une
+        position est en dollars, donc son denominateur doit l'etre aussi. Une
+        distance de prix multipliee par un volume n'est pas un montant -- il y
+        manque la taille du contrat, 100 sur l'or et 100 000 sur l'euro.
+
+        On repasse par ``loss_for_one_lot``, la fonction qui a servi a
+        dimensionner la position : le R se mesure ainsi avec la meme regle qui
+        a decide du lot, ``order_calc_profit`` en tete et l'arithmetique sur
+        les ticks en secours.
+        """
+        stop = getattr(trade, "initial_stop_loss", None)
+        entree = getattr(trade, "open_price", None)
+        volume = getattr(trade, "initial_volume", None)
+        if stop is None or not entree or not volume:
+            return None
+        if abs(entree - stop) <= 0:
+            return None
+
+        symbol = await service.symbol_info(trade.symbol)
+        if symbol is None:
+            return None
+        par_lot, _ = await loss_for_one_lot(service, symbol, trade.direction, entree, stop)
+        if not par_lot or par_lot <= 0:
+            return None
+        return par_lot * volume
+
+    async def _apply_closed_trades(
+        self,
+        session: AsyncSession,
+        closed: list[Any],
+        service: MetaTraderService | None = None,
+    ) -> None:
         """Met a jour les compteurs journaliers et les pertes consecutives."""
         state = await settings_repo.get_trading_state(session)
         settings = await settings_repo.get_risk_settings(session)
@@ -877,11 +932,18 @@ class TradingEngine:
                 state.consecutive_losses += 1
             elif result > 0:
                 state.consecutive_losses = 0
-            if trade.initial_stop_loss is not None and trade.open_price:
-                risk = abs(trade.open_price - trade.initial_stop_loss)
-                if risk > 0 and trade.initial_volume:
-                    trade.r_multiple = round(result / (risk * trade.initial_volume), 3) if risk else None
-                    await trade_repo.save_trade(session, trade)
+            if service is None:
+                continue
+            try:
+                reference = await self.risk_reference(service, trade)
+            except Exception as exc:  # le terminal peut refuser le symbole
+                logger.debug("Risque de reference indisponible pour %s : %s", trade.symbol, exc)
+                reference = None
+            # Sans reference fiable on laisse le champ vide : un R invente
+            # pollue les statistiques par canal plus surement qu'un trou.
+            if reference:
+                trade.r_multiple = round(result / reference, 3)
+                await trade_repo.save_trade(session, trade)
         await settings_repo.save_trading_state(session, state)
 
         if (

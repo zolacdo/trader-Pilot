@@ -99,7 +99,14 @@ def today_key(moment: datetime | None = None) -> str:
 
 
 async def ensure_day_rollover(session: AsyncSession, current_balance: float | None) -> TradingState:
-    """Reinitialise les compteurs journaliers au changement de jour UTC."""
+    """Reinitialise les compteurs journaliers au changement de jour UTC.
+
+    Ne juge JAMAIS l'ecart entre le solde et les compteurs : appele en tete de
+    cycle, le solde recu vient du courtier et inclut deja les positions
+    fermees a l'instant, que ``day_realized_pnl`` ne connait pas encore. C'est
+    le role de ``reconcile_external_balance_move``, appele une fois les
+    clotures comptabilisees.
+    """
     state = await get_trading_state(session)
     key = today_key()
     if state.day_key != key:
@@ -114,21 +121,46 @@ async def ensure_day_rollover(session: AsyncSession, current_balance: float | No
         state.day_start_balance = current_balance
         session.add(state)
         await session.flush()
-    elif current_balance is not None and state.day_start_balance is not None:
-        # Hors trading, le solde ne bouge pas : il devrait valoir le solde du
-        # matin plus le realise du jour. Tout ecart vient d'un mouvement
-        # externe -- rechargement du compte demo, depot, retrait. Garder
-        # l'ancien repere mesurerait les pertes du jour sur un capital qui
-        # n'existe plus : apres un passage de 50 a 500, une limite a 8 %
-        # aurait arrete la journee des 4 dollars perdus au lieu de 40.
-        attendu = state.day_start_balance + state.day_realized_pnl
-        tolerance = max(5.0, abs(attendu) * 0.05)
-        if abs(current_balance - attendu) > tolerance:
-            state.day_start_balance = current_balance - state.day_realized_pnl
-            state.peak_equity = None
-            state.updated_at = utcnow()
-            session.add(state)
-            await session.flush()
+    return state
+
+
+async def reconcile_external_balance_move(
+    session: AsyncSession, current_balance: float | None
+) -> TradingState:
+    """Recale les reperes du jour apres un mouvement d'argent externe.
+
+    Hors trading, le solde ne bouge pas : il vaut le solde du matin plus le
+    realise du jour. Tout ecart vient d'un mouvement externe -- rechargement
+    du compte demo, depot, retrait. Garder l'ancien repere mesurerait les
+    pertes du jour sur un capital qui n'existe plus : apres un passage de 50 a
+    500, une limite a 8 % aurait arrete la journee des 4 dollars perdus au
+    lieu de 40.
+
+    **A n'appeler qu'une fois les clotures du cycle comptabilisees.** Tant que
+    ``day_realized_pnl`` ignore une position fermee, l'ecart vaut exactement le
+    resultat de cette position et la confusion est totale : le 14/09/2026, les
+    quatre pertes de la journee (-48, -40, -43,18, -36,08 sur un compte de
+    540 $) depassaient toutes la tolerance de 5 %. Chacune a donc reecrit
+    ``day_start_balance`` et efface ``peak_equity`` -- autrement dit, plus la
+    perte etait grosse, plus surement elle effacait la memoire des deux
+    garde-fous charges de l'arreter. Le compte a perdu 28,5 % dans la journee
+    sans que ``max_daily_loss_percent`` (50 %) ni ``max_drawdown_percent``
+    (10 %) ne puissent se declencher une seule fois.
+    """
+    state = await get_trading_state(session)
+    if current_balance is None or state.day_start_balance is None:
+        return state
+    if state.day_key != today_key():
+        return state
+
+    attendu = state.day_start_balance + state.day_realized_pnl
+    tolerance = max(5.0, abs(attendu) * 0.05)
+    if abs(current_balance - attendu) > tolerance:
+        state.day_start_balance = current_balance - state.day_realized_pnl
+        state.peak_equity = None
+        state.updated_at = utcnow()
+        session.add(state)
+        await session.flush()
     return state
 
 

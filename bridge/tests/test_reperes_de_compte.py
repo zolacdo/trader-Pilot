@@ -9,6 +9,11 @@ Constate en production le 11/09/2026 : le compte est passe de 50 a 500 dollars
 sans changement de mode, ``day_start_balance`` est reste a 50, et la limite de
 perte journaliere de 8 % se serait declenchee des 4 dollars perdus au lieu
 de 40.
+
+Ce recalage vit dans ``reconcile_external_balance_move`` depuis le 14/09/2026.
+Il etait porte par ``ensure_day_rollover``, appele en tete de cycle avec un
+solde qui inclut deja les positions fermees a l'instant : chaque grosse perte
+y passait pour un retrait. Voir ``test_garde_fous_journaliers.py``.
 """
 
 from __future__ import annotations
@@ -26,7 +31,7 @@ async def test_un_rechargement_de_compte_recale_le_repere(session: AsyncSession)
     etat.peak_equity = 50.0
     await settings_repo.save_trading_state(session, etat)
 
-    recale = await settings_repo.ensure_day_rollover(session, 500.0)
+    recale = await settings_repo.reconcile_external_balance_move(session, 500.0)
 
     assert recale.day_start_balance == 500.0
     # Le plus haut d'equity doit etre reconstruit a partir du compte actif.
@@ -42,7 +47,7 @@ async def test_le_realise_du_jour_est_conserve_au_recalage(session: AsyncSession
     await settings_repo.save_trading_state(session, etat)
 
     # 80 attendus (100 - 20) ; le compte en affiche 580 : 500 ont ete deposes.
-    recale = await settings_repo.ensure_day_rollover(session, 580.0)
+    recale = await settings_repo.reconcile_external_balance_move(session, 580.0)
 
     assert recale.day_realized_pnl == -20.0
     # Le repere doit rester coherent : perte du jour toujours mesurable.
@@ -62,7 +67,7 @@ async def test_une_perte_ordinaire_ne_declenche_aucun_recalage(session: AsyncSes
     etat.peak_equity = 500.0
     await settings_repo.save_trading_state(session, etat)
 
-    inchange = await settings_repo.ensure_day_rollover(session, 470.0)
+    inchange = await settings_repo.reconcile_external_balance_move(session, 470.0)
 
     assert inchange.day_start_balance == 500.0
     assert inchange.peak_equity == 500.0
@@ -76,6 +81,6 @@ async def test_les_frais_ne_declenchent_aucun_recalage(session: AsyncSession) ->
     etat.day_realized_pnl = 0.0
     await settings_repo.save_trading_state(session, etat)
 
-    inchange = await settings_repo.ensure_day_rollover(session, 497.5)
+    inchange = await settings_repo.reconcile_external_balance_move(session, 497.5)
 
     assert inchange.day_start_balance == 500.0
