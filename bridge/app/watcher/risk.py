@@ -70,6 +70,15 @@ class RiskDecision:
         }
 
 
+def _entree_ecartee(levels: TradeLevels, config: WatcherConfig) -> bool:
+    """Vrai si l'apprentissage a ecarte ce type d'entree."""
+    entry_type = getattr(levels, "entry_type", None)
+    if entry_type is None:
+        return False
+    valeur = str(getattr(entry_type, "value", entry_type)).upper()
+    return valeur in {str(item).upper() for item in config.disabled_entry_types or []}
+
+
 def evaluate(
     context: MarketContext,
     direction: Direction,
@@ -98,6 +107,15 @@ def evaluate(
     if levels is None or not levels.valid:
         motif = levels.rejection if levels is not None else "Niveaux non calculables."
         rejections.append(motif or "Niveaux non calculables.")
+    elif _entree_ecartee(levels, config):
+        # C'est ici que la decision de l'apprentissage prend effet. Sans ce
+        # refus, ``disabled_entry_types`` serait ecrit par la boucle et lu par
+        # personne : le bannissement serait annonce dans le canal sans jamais
+        # empecher un seul signal.
+        rejections.append(
+            f"Type d'entree {levels.entry_type.value} ecarte par l'apprentissage : "
+            "aucun gain sur les dernieres operations denouees."
+        )
     if card is None:
         rejections.append("Aucun score calculable.")
     else:

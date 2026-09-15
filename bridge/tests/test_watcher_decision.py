@@ -291,6 +291,31 @@ class TestRiskManager:
         assert decision.verdict in (RiskVerdict.WAIT, RiskVerdict.REJECTED)
         assert any("spread" in reason.lower() for reason in decision.reasons)
 
+    def test_un_type_d_entree_ecarte_est_refuse(self, config: WatcherConfig) -> None:
+        """Une decision de l'apprentissage doit changer quelque chose.
+
+        Sans ce refus, ``disabled_entry_types`` serait ecrit par la boucle et
+        lu par personne : le bannissement annonce dans le canal n'empecherait
+        aucun signal, et le systeme continuerait exactement comme avant.
+        """
+        context = make_context()
+        levels = build_levels(context, Direction.BUY, config.minimum_rr)
+        config.disabled_entry_types = [levels.entry_type.value]
+
+        decision = self._evaluer(context, config)
+
+        assert decision.verdict is RiskVerdict.REJECTED
+        assert any("ecarte" in reason.lower() for reason in decision.reasons)
+
+    def test_un_type_d_entree_non_ecarte_passe(self, config: WatcherConfig) -> None:
+        """Le refus vise un type precis, pas tous les autres."""
+        context = make_context()
+        config.disabled_entry_types = ["UN_TYPE_QUI_N_EXISTE_PAS"]
+
+        decision = self._evaluer(context, config)
+
+        assert not any("ecarte par l'apprentissage" in reason for reason in decision.reasons)
+
     def test_volatilite_extreme_est_refusee(self, config: WatcherConfig) -> None:
         context = make_context(volatility=VolatilityLevel.EXTREME)
         decision = self._evaluer(context, config)
