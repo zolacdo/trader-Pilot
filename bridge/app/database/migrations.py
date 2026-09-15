@@ -20,10 +20,11 @@ from sqlmodel import SQLModel
 
 from app.config.logging_config import get_logger
 from app.models.enums import TrailingMode
+from app.services.risk.quality import MAX_QUALITY_FLOOR
 
 logger = get_logger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 
 
 def _existing_columns(conn: Connection, table: str) -> set[str]:
@@ -196,9 +197,56 @@ def _migration_002(conn: Connection) -> None:
     )
 
 
+def _migration_003(conn: Connection) -> None:
+    """Ramene un plancher de risque dynamique qui neutralisait la modulation.
+
+    A 1,0, ``dynamic_risk_floor`` servait de borne basse ET de borne haute
+    dans ``quality.py`` : le multiplicateur valait toujours 1, les cinq
+    facteurs de qualite etaient calcules puis jetes, et l'interrupteur restait
+    affiche actif. Le 14/09/2026, les quatre positions parties au stop
+    portaient « qualite 1.00 (plus penalisant : rendement_risque 0.50) » dans
+    leur journal d'audit -- la contradiction en toutes lettres.
+
+    On ne force pas le defaut de 0,35 : le compte garde la reduction la plus
+    faible que le modele autorise desormais, et l'utilisateur reste maitre du
+    reglage. Pour eteindre la modulation, ``dynamic_risk_enabled`` existe.
+    """
+    table = SQLModel.metadata.tables["risk_settings"]
+    conn.execute(
+        table.update()
+        .where(table.c.dynamic_risk_floor > MAX_QUALITY_FLOOR)
+        .values(dynamic_risk_floor=MAX_QUALITY_FLOOR)
+    )
+
+
+def _migration_004(conn: Connection) -> None:
+    """Efface les R multiples produits par une formule dimensionnellement fausse.
+
+    ``resultat / (distance de prix x volume)`` divisait des dollars par une
+    grandeur qui n'en est pas : il y manquait la valeur du contrat. L'erreur
+    valait donc exactement cette valeur -- 100 sur l'or, 100 000 sur l'euro, et
+    1 sur les indices, ou la formule tombait juste par hasard. En base le
+    14/09/2026 : -100, -100, -99,989, -100000 et +28688 pour des positions
+    parties au stop, qui valent toutes -1 R.
+
+    On n'en recalcule aucun : la valeur juste demande la taille du contrat, que
+    seul le terminal connait, et un R invente pollue ``learning/performance``
+    -- qui en fait des sommes -- plus surement qu'un trou. Les colonnes brutes
+    (entree, stop initial, volume, resultat) restent intactes : le chiffre est
+    reconstituable, et les positions fermees apres cette version sont mesurees
+    par ``TradingEngine.risk_reference``.
+    """
+    table = SQLModel.metadata.tables["trades"]
+    conn.execute(
+        table.update().where(table.c.r_multiple.is_not(None)).values(r_multiple=None)
+    )
+
+
 MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     1: _migration_001,
     2: _migration_002,
+    3: _migration_003,
+    4: _migration_004,
 }
 
 
