@@ -14,9 +14,12 @@ Deux choix assumes, tous deux pessimistes :
 * quand une meme bougie contient le stop ET un objectif, on retient le stop.
   On ne sait pas lequel a ete touche en premier, et supposer le contraire
   gonflerait artificiellement les statistiques ;
-* le resultat est mesure sur position entiere. Un signal qui touche TP1 puis
-  revient au stop est compte -1 R, meme si le suivi montre qu'il etait passe
-  en gain. Le maximum favorable atteint est conserve a part.
+* le resultat suit la gestion reellement appliquee. Les memes reglages que
+  ``position_manager`` -- fermeture partielle aux objectifs, break even sur
+  TP1 -- sont lus ici, et un signal qui touche TP1 puis revient au stop garde
+  le gain encaisse au lieu d'etre compte -1 R. Mesurer « sur position
+  entiere » decrivait une strategie sans sortie partielle, qui n'est plus
+  celle qui s'execute. Le maximum favorable atteint est conserve a part.
 """
 
 from __future__ import annotations
@@ -28,9 +31,10 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.logging_config import get_logger
-from app.models.core import as_utc, utcnow
-from app.models.enums import Direction
+from app.models.core import RiskSettings, as_utc, utcnow
+from app.models.enums import BreakEvenTrigger, Direction, MultiTpStrategy
 from app.models.intelligence import Timeframe
+from app.repositories import settings_repo
 from app.services.market_data.engine import MAX_BARS, MarketDataEngine
 from app.services.mt5.interface import Candle
 from app.watcher import formatter, repository
@@ -112,12 +116,15 @@ class LifecycleTracker:
         """Passe en revue tous les signaux encore ouverts."""
         moment = now or utcnow()
         report = LifecycleReport()
+        # Les memes reglages que ``position_manager`` : le suivi ne doit
+        # jamais pouvoir compter autrement que ce que le courtier execute.
+        risk = await settings_repo.get_risk_settings(session)
         signals = await repository.open_signals(session)
         report.checked = len(signals)
 
         for signal in signals:
             try:
-                updates = await self._advance(session, engine, signal, config, moment)
+                updates = await self._advance(session, engine, signal, config, moment, risk)
             except Exception as exc:
                 # La panne d'un instrument ne doit pas suspendre le suivi des
                 # autres signaux.
@@ -149,6 +156,7 @@ class LifecycleTracker:
         signal: WatcherSignal,
         config: WatcherConfig,
         now: datetime,
+        risk: RiskSettings,
     ) -> list[SignalUpdate]:
         created = as_utc(signal.created_at) or now
         minutes = max(5, int((now - created).total_seconds() // 60) + 5)
@@ -163,7 +171,9 @@ class LifecycleTracker:
             transition = self._next_transition(signal, relevant)
             if transition is not None:
                 status, price, detail = transition
-                updates.append(await self._apply(session, signal, status, price, detail, config))
+                updates.append(
+                    await self._apply(session, signal, status, price, detail, config, risk)
+                )
 
         # L'expiration ne se constate qu'en l'absence d'autre changement : un
         # signal qui vient de toucher son objectif n'est pas « expire ».
@@ -179,7 +189,9 @@ class LifecycleTracker:
                 else "Duree de validite ecoulee sans que l'entree soit declenchee."
             )
             updates.append(
-                await self._apply(session, signal, WatcherStatus.EXPIRED, sortie, detail, config)
+                await self._apply(
+                    session, signal, WatcherStatus.EXPIRED, sortie, detail, config, risk
+                )
             )
         if updates:
             session.add(signal)
@@ -273,10 +285,18 @@ class LifecycleTracker:
         price: float | None,
         detail: str,
         config: WatcherConfig,
+        risk: RiskSettings,
     ) -> SignalUpdate:
         """Applique le changement, l'enregistre, et le publie si demande."""
         previous = signal.status
         signal.status = status
+
+        # Un objectif franchi n'est pas qu'une annonce : la position reelle y
+        # encaisse sa tranche et voit son stop remonter. Le suivi fait de meme,
+        # sinon il compte une perte pleine sur un gain deja protege.
+        if status in _TARGET_STATUSES and price is not None:
+            _book_partial(signal, status, price, risk)
+            _arm_break_even(signal, risk)
         if status in (
             WatcherStatus.TP3_HIT,
             WatcherStatus.SL_HIT,
@@ -317,40 +337,96 @@ def _pending(signal: WatcherSignal, status: WatcherStatus) -> bool:
     )
 
 
+def _book_partial(
+    signal: WatcherSignal, status: WatcherStatus, price: float, risk: RiskSettings
+) -> None:
+    """Encaisse la fraction que la strategie ferme a cet objectif."""
+    if risk.multi_tp_strategy is not MultiTpStrategy.PARTIAL_CLOSE:
+        return
+    if signal.risk_distance <= 0:
+        return
+    ratios = list(risk.split_ratios or [])
+    index = _TARGET_RANK[status]
+    if index >= len(ratios):
+        return
+    fraction = min(signal.open_fraction, max(0.0, ratios[index] / 100.0))
+    if fraction <= 0:
+        return
+    buy = signal.direction is Direction.BUY
+    gain = (price - signal.entry) if buy else (signal.entry - price)
+    signal.booked_r = round(signal.booked_r + fraction * gain / signal.risk_distance, 3)
+    signal.open_fraction = round(signal.open_fraction - fraction, 3)
+
+
+def _arm_break_even(signal: WatcherSignal, risk: RiskSettings) -> None:
+    """Remonte le stop suivi a l'entree, comme le fait le gestionnaire reel.
+
+    Le decalage se calcule depuis ``digits`` plutot que depuis un
+    ``SymbolInfo`` : le suivi ne doit pas avoir besoin d'interroger
+    MetaTrader pour tenir ses comptes.
+    """
+    if not risk.break_even_enabled:
+        return
+    if risk.break_even_trigger is not BreakEvenTrigger.TP1_HIT:
+        return
+    offset = risk.break_even_offset_points * (10.0**-signal.digits)
+    buy = signal.direction is Direction.BUY
+    cible = (
+        round(signal.entry + offset, signal.digits)
+        if buy
+        else round(signal.entry - offset, signal.digits)
+    )
+    deja_protecteur = (cible <= signal.stop_loss) if buy else (cible >= signal.stop_loss)
+    if deja_protecteur:
+        return
+    signal.stop_loss = cible
+
+
 def _result_in_r(
     signal: WatcherSignal,
     status: WatcherStatus,
     previous: WatcherStatus,
     price: float | None = None,
 ) -> float | None:
-    """Resultat en unites de risque au moment de la cloture.
+    """Resultat en unites de risque : ce qui est acquis, plus ce qui reste.
 
     Un signal jamais declenche n'a pas de resultat : il rend ``None``, pas
     zero. Compter un signal invalide comme une operation a zero fausserait le
     taux de reussite.
 
-    Un signal qui expire apres avoir touche TP1 ou TP2 garde en revanche le
-    gain de l'objectif reellement atteint : l'objectif a bien ete touche, et
-    l'oublier sous-estimerait la performance.
-
-    Une position encore ouverte a l'expiration est chiffree au dernier cours.
-    La laisser sans resultat la ferait disparaitre des statistiques alors
-    qu'elle a bel et bien ete prise.
+    Pour tout le reste, le resultat vaut ``booked_r + open_fraction x R(prix
+    de sortie)``. Un signal qu'aucune gestion n'a touche a garde son stop
+    initial et sa position entiere : il vaut donc exactement -1 R au stop,
+    comme avant. Un signal gere garde le gain encaisse a TP1 et sort le reste
+    au stop deplace -- ce que le compte a reellement fait.
     """
+    if status is WatcherStatus.INVALIDATED:
+        return None
+    if _pending(signal, previous) and signal.booked_r == 0.0:
+        return None
+    sortie = _exit_r(signal, status, price)
+    if sortie is None:
+        return None
+    return round(signal.booked_r + signal.open_fraction * sortie, 3)
+
+
+def _exit_r(
+    signal: WatcherSignal, status: WatcherStatus, price: float | None
+) -> float | None:
+    """R de la fraction encore ouverte, mesure au prix de sortie."""
+    if signal.risk_distance <= 0:
+        return None
     if status is WatcherStatus.SL_HIT:
-        return -1.0
-    if status is WatcherStatus.TP3_HIT:
-        return signal.risk_reward_3 or signal.risk_reward_2 or signal.risk_reward_1
-    if status is WatcherStatus.EXPIRED:
-        if previous is WatcherStatus.TP2_HIT:
-            return signal.risk_reward_2 or signal.risk_reward_1
-        if previous is WatcherStatus.TP1_HIT:
-            return signal.risk_reward_1
-        if price is not None and signal.risk_distance > 0 and not _pending(signal, previous):
-            buy = signal.direction is Direction.BUY
-            gain = (price - signal.entry) if buy else (signal.entry - price)
-            return round(gain / signal.risk_distance, 3)
-    return None
+        cible: float | None = signal.stop_loss
+    elif status is WatcherStatus.TP3_HIT:
+        cible = signal.take_profit_3 or signal.take_profit_2 or signal.take_profit_1
+    else:
+        cible = price
+    if cible is None:
+        return None
+    buy = signal.direction is Direction.BUY
+    gain = (cible - signal.entry) if buy else (signal.entry - cible)
+    return gain / signal.risk_distance
 
 
 __all__ = ["LifecycleReport", "LifecycleTracker", "SignalUpdate"]

@@ -204,6 +204,13 @@ class WatcherSignal(SQLModel, table=True):
     max_favorable_r: float = Field(default=0.0)
     max_adverse_r: float = Field(default=0.0)
 
+    # Fraction deja encaissee, en unites de risque, et part encore ouverte.
+    # Sans ces deux champs le suivi mesure « sur position entiere » alors que
+    # le courtier a ferme 40 % a TP1 : il inscrit -1 R sur une operation qui
+    # avait protege son gain.
+    booked_r: float = Field(default=0.0)
+    open_fraction: float = Field(default=1.0)
+
     @property
     def is_open(self) -> bool:
         return self.status in OPEN_STATUSES
