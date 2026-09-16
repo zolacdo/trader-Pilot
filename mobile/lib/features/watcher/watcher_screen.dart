@@ -119,7 +119,7 @@ class _ThresholdPivot extends ConsumerWidget {
         error: (Object error, StackTrace stack) =>
             const Text('Seuils indisponibles : la comparaison reste lisible.'),
         data: (Map<String, dynamic> payload) {
-          final Map<String, dynamic> config = bandMap(payload, 'config');
+          final Map<String, dynamic> config = bandMap(payload, 'settings');
           final num? seuil = bandNum(config, 'minimumScore');
           final num? plancher = bandNum(config, 'shadowScore');
           final String seuilTexte = seuil == null ? '--' : seuil.toStringAsFixed(0);

@@ -219,6 +219,11 @@ class WatcherConfig:
             "watchScore": self.watch_score,
             "strongScore": self.strong_score,
             "minimumRr": self.minimum_rr,
+            # La bande mesuree sous le seuil, et de quoi la lire : sans ces
+            # deux valeurs, l'application ne peut pas dire ou commence ni ou
+            # s'arrete ce qu'elle compare.
+            "shadowEnabled": self.shadow_enabled,
+            "shadowScore": self.shadow_score,
             "maxSpreadPoints": self.max_spread_points,
             "maxSpreadAtrRatio": self.max_spread_atr_ratio,
             "blockHighImpactNews": self.block_high_impact_news,

@@ -46,7 +46,7 @@ num? bandNum(Map<String, dynamic> source, String key) {
   return null;
 }
 
-/// Sous-objet d'une réponse (`report`, `shadowBand`, `overall`, `config`).
+/// Sous-objet d'une réponse (`report`, `shadowBand`, `overall`, `settings`).
 Map<String, dynamic> bandMap(Map<String, dynamic> source, String key) {
   final Object? value = source[key];
   if (value is Map) return Map<String, dynamic>.from(value);
