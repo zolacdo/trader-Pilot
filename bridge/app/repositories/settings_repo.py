@@ -114,6 +114,20 @@ async def ensure_day_rollover(session: AsyncSession, current_balance: float | No
         state.day_start_balance = current_balance
         state.day_realized_pnl = 0.0
         state.day_risked_percent = 0.0
+        # Le sommet d'equite tombe avec les autres compteurs du jour. La
+        # verification du drawdown vit dans ``_check_daily_limits`` : le garder
+        # d'un jour sur l'autre faisait d'une limite JOURNALIERE un plafond a
+        # vie, et une fois franchie elle ne relachait plus jamais.
+        #
+        # Constate le 16/09/2026 : sommet 472,79, solde 424,65, soit 10,18 %
+        # pour une limite a 10 %. Tous les ordres etaient refuses et aucune
+        # position n'etait ouverte, donc rien ne pouvait regagner les 0,86 $
+        # manquants. Un arret definitif, pas un coupe-circuit.
+        #
+        # Le meme remede existait pour le changement de mode d'execution, et sa
+        # docstring decrivait deja la meme panne. Il se reconstruit au tour
+        # suivant sur l'equite reelle du jour qui commence.
+        state.peak_equity = None
         state.updated_at = utcnow()
         session.add(state)
         await session.flush()

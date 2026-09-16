@@ -84,3 +84,46 @@ async def test_les_frais_ne_declenchent_aucun_recalage(session: AsyncSession) ->
     inchange = await settings_repo.reconcile_external_balance_move(session, 497.5)
 
     assert inchange.day_start_balance == 500.0
+
+
+async def test_le_changement_de_jour_remet_le_sommet_a_zero(session: AsyncSession) -> None:
+    """Une limite journaliere ne se mesure pas contre un sommet de toujours.
+
+    La verification du drawdown vit dans ``_check_daily_limits``, avec les
+    autres compteurs du jour -- qui tous se remettent a zero au changement de
+    jour. ``peak_equity`` ne le faisait pas : la limite de 10 % devenait donc
+    un plafond a vie, et une fois franchie elle ne relachait plus jamais.
+
+    Constate le 16/09/2026 : sommet 472,79, solde 424,65, soit 10,18 % pour
+    une limite a 10 %. Tous les ordres etaient refuses et aucune position
+    n'etait ouverte -- donc rien ne pouvait regagner les 0,86 $ manquants. Un
+    arret definitif, pas un coupe-circuit.
+
+    Le meme remede existait deja pour le changement de mode d'execution, et sa
+    docstring decrivait la meme panne : « la limite de perte maximale aurait
+    refuse tous les ordres ».
+    """
+    etat = await settings_repo.get_trading_state(session)
+    etat.day_key = "2026-09-15"
+    etat.day_start_balance = 472.79
+    etat.peak_equity = 472.79
+    await settings_repo.save_trading_state(session, etat)
+
+    recale = await settings_repo.ensure_day_rollover(session, 424.65)
+
+    assert recale.day_key == settings_repo.today_key()
+    assert recale.peak_equity is None, "le sommet se reconstruit sur le jour qui commence"
+    assert recale.day_start_balance == 424.65
+
+
+async def test_le_sommet_survit_dans_la_journee(session: AsyncSession) -> None:
+    """Il ne doit tomber qu'au changement de jour, pas a chaque tour."""
+    etat = await settings_repo.get_trading_state(session)
+    etat.day_key = settings_repo.today_key()
+    etat.day_start_balance = 500.0
+    etat.peak_equity = 520.0
+    await settings_repo.save_trading_state(session, etat)
+
+    inchange = await settings_repo.ensure_day_rollover(session, 495.0)
+
+    assert inchange.peak_equity == 520.0
