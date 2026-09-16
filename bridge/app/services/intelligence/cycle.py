@@ -7,9 +7,14 @@ Deux principes gouvernent ce fichier :
 
 1. **Ne rien ouvrir n'est pas une panne.** La plupart des tours se terminent
    sans aucune opportunite. C'est le fonctionnement attendu (CDC2 §2).
-2. **Aucun ordre n'est envoye ici.** Ce cycle observe, explique et enregistre.
-   Le passage a l'execution reste soumis au RiskManager et au moteur de
-   trading, qui ont leurs propres garde-fous.
+2. **Aucun chemin d'execution parallele.** Le cycle a longtemps observe sans
+   jamais agir ; depuis le 16/09/2026 il remet ses decisions tradables au
+   moteur de trading, mais par le MEME chemin qu'un signal recu d'un canal :
+   parser, validation, RiskManager, ``order_check``, ``order_send``. Les
+   plafonds d'exposition, les limites journalieres, la pause apres pertes
+   consecutives et le coupe-circuit valent donc pour lui sans qu'une ligne
+   d'ici n'ait a les redire. Voir ``intelligence/execution.py`` et son
+   reglage ``intelligence.auto_trade``, coupe par defaut.
 """
 
 from __future__ import annotations
@@ -36,6 +41,7 @@ from app.services.decision.engine import DecisionOutcome, decision_engine
 from app.services.decision.inputs import ConsensusView
 from app.services.decision.shadow import build_shadow_trade, marginal_context
 from app.services.economic_calendar.engine import economic_calendar_engine
+from app.services.intelligence import execution
 from app.services.intelligence.assembly import build_bundle
 from app.services.market_data.engine import MarketDataEngine
 from app.services.market_data.provider import market_engine
@@ -63,6 +69,7 @@ class SymbolOutcome:
     decision_id: int | None = None
     opportunity_id: int | None = None
     notified: bool = False
+    executed: bool = False
     skipped: str | None = None
 
 
@@ -76,6 +83,7 @@ class CycleReport:
     qualified: int = 0
     notifications: int = 0
     shadow_trades: int = 0
+    executions: int = 0
     consensus_failures: int = 0
     outcomes: list[SymbolOutcome] = field(default_factory=list)
     error: str | None = None
@@ -88,6 +96,7 @@ class CycleReport:
             "qualified": self.qualified,
             "notifications": self.notifications,
             "shadowTrades": self.shadow_trades,
+            "executions": self.executions,
             "consensusFailures": self.consensus_failures,
             "error": self.error,
             "symbols": [
@@ -98,6 +107,7 @@ class CycleReport:
                     "decisionId": item.decision_id,
                     "opportunityId": item.opportunity_id,
                     "notified": item.notified,
+                    "executed": item.executed,
                     "skipped": item.skipped,
                 }
                 for item in self.outcomes
@@ -291,6 +301,16 @@ async def _analyse_symbol(
             simulation.broker_symbol = result.broker_symbol
             await decision_repo.save_shadow_trade(session, simulation)
             report.shadow_trades += 1
+
+    if verdict.tradable:
+        # Passage a l'acte. Le module d'execution porte les garde-fous ; ici on
+        # ne fait que lui remettre la decision et compter ce qui en sort.
+        remise = await execution.execute_decision(
+            session, result.symbol, draft.levels, shadow_mode=shadow_mode
+        )
+        issue.executed = remise.executed
+        if remise.executed:
+            report.executions += 1
 
     if opportunite is not None and draft.qualified:
         issue.notified = await _notify_opportunity(
