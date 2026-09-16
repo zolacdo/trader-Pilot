@@ -76,13 +76,16 @@ class ProcessOutcome:
         }
 
 
-def _learning_record(trade: Any, result: float) -> recorder.TradeLearningRecord:
+def _learning_record(
+    trade: Any, result: float, strategy: str | None = None
+) -> recorder.TradeLearningRecord:
     """Contexte d'apprentissage d'un trade clos, sans rien inventer.
 
     Les champs que la position ne porte pas restent vides : le recorder
     distingue « absent » de « zero », et une valeur devinee vaudrait moins
-    qu'un trou. La strategie n'est pas nommee parce que rien ne la nomme sur
-    une position -- il faudrait que le chemin de decision la transmette.
+    qu'un trou. La strategie vient du signal d'origine, qui seul la connait --
+    le cycle autonome la nomme, un message Telegram n'en a pas, et rien n'en
+    invente : elle retombe alors sur « non specifiee ».
 
     L'origine, elle, se deduit honnetement : un trade rattache a un signal
     vient d'un canal Telegram, sinon du cycle autonome. C'est exactement la
@@ -97,6 +100,7 @@ def _learning_record(trade: Any, result: float) -> recorder.TradeLearningRecord:
     return recorder.TradeLearningRecord(
         symbol=trade.symbol,
         direction=trade.direction,
+        strategy=strategy,
         source=(
             DecisionSource.TELEGRAM
             if trade.signal_id is not None
@@ -999,7 +1003,13 @@ class TradingEngine:
             # d'elle, sinon une panne de la memoire empecherait une perte
             # d'etre comptee et un garde-fou journalier de se declencher.
             try:
-                await recorder.record_trade_outcome(session, _learning_record(trade, result))
+                strategie: str | None = None
+                if trade.signal_id is not None:
+                    origine = await signal_repo.get(session, int(trade.signal_id))
+                    strategie = origine.strategy if origine is not None else None
+                await recorder.record_trade_outcome(
+                    session, _learning_record(trade, result, strategie)
+                )
             except Exception as exc:
                 logger.warning(
                     "Memoire d'apprentissage non alimentee pour le ticket %s : %s",

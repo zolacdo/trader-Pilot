@@ -43,6 +43,15 @@ class Signal(SQLModel, table=True):
     message_date: datetime | None = Field(default=None, index=True)
     raw_text: str = Field(sa_column=Column(Text))
 
+    # Strategie qui a produit ce signal, quand elle est connue. Le cycle
+    # autonome la nomme ; un message Telegram n'en a pas, et rien n'en invente.
+    #
+    # Elle vit ici plutot que sur la position : tout ce qui decoule d'une
+    # execution -- position, ordre en attente, position nee de cet ordre --
+    # porte deja ``signal_id``, donc une seule colonne suffit la ou deux et une
+    # logique de report auraient ete necessaires.
+    strategy: str | None = Field(default=None, max_length=64, index=True)
+
     symbol: str | None = Field(default=None, max_length=32, index=True)
     normalized_symbol: str | None = Field(default=None, max_length=32, index=True)
     broker_symbol: str | None = Field(default=None, max_length=32)

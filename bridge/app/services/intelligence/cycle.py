@@ -306,7 +306,13 @@ async def _analyse_symbol(
         # Passage a l'acte. Le module d'execution porte les garde-fous ; ici on
         # ne fait que lui remettre la decision et compter ce qui en sort.
         remise = await execution.execute_decision(
-            session, result.symbol, draft.levels, shadow_mode=shadow_mode
+            session,
+            result.symbol,
+            draft.levels,
+            shadow_mode=shadow_mode,
+            # Seul ce chemin connait la strategie. Elle suivra la position
+            # jusqu'a sa cloture, ou le ``by_strategy`` du CDC2 la lira.
+            strategy=draft.strategy,
         )
         issue.executed = remise.executed
         if remise.executed:

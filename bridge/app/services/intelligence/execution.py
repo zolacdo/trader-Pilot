@@ -38,7 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.logging_config import get_logger
 from app.models.enums import Direction, EventLevel
-from app.repositories import settings_repo
+from app.repositories import settings_repo, signal_repo
 from app.services import journal
 from app.services.decision.inputs import TradeLevels
 from app.services.trading import trading_engine
@@ -124,6 +124,7 @@ async def execute_decision(
     levels: TradeLevels | None,
     *,
     shadow_mode: bool,
+    strategy: str | None = None,
 ) -> HandoffReport:
     """Remet une decision tradable au moteur. Ne leve jamais.
 
@@ -159,6 +160,17 @@ async def execute_decision(
             category="trading",
         )
         return HandoffReport(attempted=True, stage="error", detail=str(exc))
+
+    # La strategie est estampillee sur le signal, dont heriteront la position
+    # et l'ordre en attente. Une etiquette ne se rattrape pas apres coup : sans
+    # cette ligne, les premieres positions autonomes resteraient anonymes pour
+    # toujours et le ``by_strategy`` du CDC2 section 49 continuerait de tout
+    # regrouper sous « non specifiee ».
+    if strategy and outcome.signal_id is not None:
+        signal = await signal_repo.get(session, outcome.signal_id)
+        if signal is not None:
+            signal.strategy = strategy.strip()[:64] or None
+            await signal_repo.save(session, signal)
 
     report = HandoffReport(
         attempted=True,
