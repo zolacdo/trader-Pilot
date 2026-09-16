@@ -133,7 +133,16 @@ async def performance_report(
     device: Device = Depends(require_device),
 ) -> dict[str, Any]:
     report = await performance.compute(session, window_days=days)
-    return {"report": report.to_dict(), "summary": performance.daily_digest(report)}
+    # La bande mesuree sous le seuil vient avec : c'est la comparaison des deux
+    # qui dit si le seuil merite de descendre, et une mesure que personne ne
+    # peut lire ne sert a rien.
+    shadow = await performance.compute(session, window_days=days, shadow=True)
+    return {
+        "report": report.to_dict(),
+        "summary": performance.daily_digest(report),
+        "shadowBand": shadow.to_dict(),
+        "shadowSummary": performance.daily_digest(shadow),
+    }
 
 
 @router.post("/analysis/{symbol}", summary="Analyser un instrument maintenant")

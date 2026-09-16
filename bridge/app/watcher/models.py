@@ -359,6 +359,14 @@ class WatcherAnalysis(SQLModel, table=True):
     # c'est ce drapeau qui empeche de repeter la meme alerte a chaque tour.
     alert_sent: bool = Field(default=False)
 
+    # De quoi relire un score bas apres coup. Le 16/09/2026, repondre a « un
+    # critere du score est-il degrade ? » a demande de croiser la volatilite et
+    # l'amplitude des prix, alors que la reponse existait au moment du calcul
+    # et etait jetee. ``coverage`` dit si un critere a disparu ;
+    # ``weakest_criterion`` dit ce qui tire le score vers le bas.
+    coverage: float = Field(default=0.0)
+    weakest_criterion: str | None = Field(default=None, max_length=64)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
@@ -372,6 +380,8 @@ class WatcherAnalysis(SQLModel, table=True):
             "riskVerdict": self.risk_verdict.value,
             "blockedReason": self.blocked_reason,
             "signalId": self.signal_id,
+            "coverage": round(self.coverage, 3),
+            "weakestCriterion": self.weakest_criterion,
             "watchTrigger": self.watch_trigger,
             "alertSent": self.alert_sent,
         }

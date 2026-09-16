@@ -569,7 +569,25 @@ class WatcherEngine:
             signal_id=outcome.signal.id if outcome.signal is not None else None,
             watch_trigger=trigger,
             alert_sent=bool(outcome.publication is not None and outcome.publication.sent),
+            coverage=outcome.card.coverage if outcome.card is not None else 0.0,
+            weakest_criterion=_weakest(outcome.card),
         )
+
+
+def _weakest(card: ScoreCard | None) -> str | None:
+    """Critere disponible le plus faible : ce qui tire le score vers le bas.
+
+    Les criteres indisponibles sont ecartes : leur ratio vaut zero parce qu'ils
+    n'ont pas ete mesures, pas parce que le marche a mal note. Les confondre
+    designerait toujours le meme coupable innocent, et ``coverage`` dit deja
+    combien il en manque.
+    """
+    if card is None:
+        return None
+    disponibles = [item for item in card.criteria if item.available]
+    if not disponibles:
+        return None
+    return min(disponibles, key=lambda item: item.ratio).key
 
 
 def _timeframe_states(context: MarketContext) -> dict[str, str]:

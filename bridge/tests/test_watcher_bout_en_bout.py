@@ -85,6 +85,24 @@ class TestAnalyseComplete:
         assert trace.symbol == SYMBOL
         assert trace.decision in set(WatcherDecision)
 
+    async def test_la_trace_dit_pourquoi_le_score_est_bas(
+        self, session, market: MarketDataEngine, watcher: WatcherEngine, config: WatcherConfig
+    ) -> None:
+        """Sans ces deux valeurs, un score bas est indechiffrable apres coup.
+
+        Le 16/09/2026, repondre a « un critere du score est-il degrade ? » a
+        demande de croiser la volatilite et l'amplitude des prix, alors que la
+        reponse existait au moment du calcul et etait jetee. La couverture dit
+        si un critere a disparu ; le critere le plus faible dit ce qui tire le
+        score vers le bas.
+        """
+        await watcher.analyse(session, market, SYMBOL, SYMBOL, config)
+
+        trace = await repository.last_analysis(session, SYMBOL)
+        assert trace is not None
+        assert 0.0 < trace.coverage <= 1.0
+        assert trace.weakest_criterion, "le critere le plus faible doit etre nomme"
+
     async def test_un_seuil_atteignable_produit_un_signal_publie(
         self,
         session,

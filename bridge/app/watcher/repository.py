@@ -235,6 +235,8 @@ async def record_analysis(
     signal_id: int | None = None,
     watch_trigger: str | None = None,
     alert_sent: bool = False,
+    coverage: float = 0.0,
+    weakest_criterion: str | None = None,
 ) -> WatcherAnalysis:
     analysis = WatcherAnalysis(
         symbol=symbol.strip().upper(),
@@ -248,6 +250,8 @@ async def record_analysis(
         signal_id=signal_id,
         watch_trigger=watch_trigger[:200] if watch_trigger else None,
         alert_sent=alert_sent,
+        coverage=round(float(coverage), 4),
+        weakest_criterion=weakest_criterion[:64] if weakest_criterion else None,
     )
     session.add(analysis)
     await session.flush()

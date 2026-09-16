@@ -129,6 +129,30 @@ class TestRoutes:
         assert "summary" in response.json()
         assert response.json()["report"]["overall"]["trades"] == 0
 
+    async def test_performance_separe_la_bande_mesuree_du_reel(
+        self, auth_client: AsyncClient, session
+    ) -> None:
+        """Les deux bandes cote a cote : c'est la comparaison qui decide du seuil.
+
+        Sans elle, la mesure vit en base et personne ne peut la lire pour
+        juger si le seuil merite de descendre.
+        """
+        reel = await _creer_signal(session)
+        reel.status = WatcherStatus.SL_HIT
+        reel.result_r = -1.0
+        fantome = await _creer_signal(session)
+        fantome.shadow = True
+        fantome.status = WatcherStatus.TP3_HIT
+        fantome.result_r = 2.0
+        await session.flush()
+
+        payload = (await auth_client.get(f"{BASE}/performance")).json()
+
+        assert payload["report"]["overall"]["trades"] == 1
+        assert payload["report"]["overall"]["totalR"] == pytest.approx(-1.0)
+        assert payload["shadowBand"]["overall"]["trades"] == 1
+        assert payload["shadowBand"]["overall"]["totalR"] == pytest.approx(2.0)
+
     async def test_cible_de_boucle_inconnue_renvoie_422(
         self, auth_client: AsyncClient
     ) -> None:
