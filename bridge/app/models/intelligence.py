@@ -478,6 +478,16 @@ class ShadowTrade(SQLModel, table=True):
     result: str | None = Field(default=None, max_length=32)
     source: DecisionSource = Field(default=DecisionSource.AI_GENERATED)
 
+    # Bande marginale : opportunite ecartee pour la SEULE raison du seuil de
+    # confiance, enregistree pendant que le trading continue normalement.
+    # C'est le capteur qui rend defendable une baisse de ce seuil -- sans lui,
+    # personne ne sait ce que vaut ce qu'on s'apprete a laisser passer.
+    marginal: bool = Field(default=False, index=True)
+    # Nom du symbole chez le courtier. ``symbol`` porte le canonique, que le
+    # terminal ne connait pas : sans celui-ci, aucune bougie ne peut etre
+    # demandee et la simulation resterait ouverte a vie.
+    broker_symbol: str | None = Field(default=None, max_length=64)
+
 
 class StrategyPerformance(SQLModel, table=True):
     """Performance agregee par strategie et par origine (CDC2 section 49)."""

@@ -26,6 +26,7 @@ from app.database.session import session_scope
 from app.models.core import utcnow
 from app.models.intelligence import NewsImpact
 from app.repositories import notification_repo, settings_repo
+from app.services.decision import shadow_tracker
 from app.services.intelligence.cycle import (
     CycleReport,
     notify_major_news,
@@ -33,6 +34,8 @@ from app.services.intelligence.cycle import (
     run_cycle,
 )
 from app.services.learning import tuner
+from app.services.market_data.engine import MarketDataEngine
+from app.services.trading.engine import trading_engine
 
 logger = get_logger(__name__)
 
@@ -342,10 +345,22 @@ class IntelligenceScheduler:
                         efface,
                         heures,
                     )
+                # Les simulations doivent trouver une issue, sinon elles ne
+                # mesurent rien : ``close_shadow_trade`` n'etait appele de
+                # nulle part et 72 d'entre elles dormaient ouvertes depuis le
+                # 11/09/2026.
+                marche = trading_engine.market
+                if marche is not None:
+                    async with session_scope() as session:
+                        await shadow_tracker.advance_open_trades(
+                            session, MarketDataEngine(marche)
+                        )
+
                 # Le regleur transforme les mesures d'apprentissage en
-                # exigence d'entree. Il ne bouge que paye d'une preuve neuve,
-                # donc passer ici toutes les dix minutes ne le fait pas
-                # deriver : il est muet la plupart du temps.
+                # exigence d'entree. Il vient APRES le suivi : une simulation
+                # close a l'instant doit peser sur la decision du meme tour.
+                # Il ne bouge que paye d'une preuve neuve, donc passer ici
+                # toutes les dix minutes ne le fait pas deriver.
                 async with session_scope() as session:
                     await tuner.tune(session)
             except Exception as exc:

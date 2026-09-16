@@ -32,8 +32,9 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.logging_config import get_logger
-from app.repositories import ai_repo, pattern_repo, settings_repo
+from app.repositories import ai_repo, decision_repo, pattern_repo, settings_repo
 from app.services import journal
+from app.services.decision.shadow import ShadowStats, compute_stats
 
 logger = get_logger(__name__)
 
@@ -52,8 +53,17 @@ STEP = 0.02
 # mais un arret deguise, et un arret doit se decider, pas se subir.
 CEILING = 0.95
 
+# Plancher absolu, une fois la bande marginale prouvee rentable. En dessous,
+# l'exigence n'ecarterait plus grand-chose et le systeme cesserait d'etre
+# selectif : ce serait un changement de nature, pas un reglage.
+MARGINAL_FLOOR = 0.40
+
 SETTING_BASELINE = "learning.confidence_baseline"
 SETTING_SAMPLE = "learning.tuner_sample"
+# Un compteur par population, la lecon du regleur du watcher : la bande
+# marginale et les trades reels sont deux mesures distinctes, et un compteur
+# commun ferait passer l'une pour la repetition de l'autre.
+SETTING_MARGINAL_SAMPLE = "learning.tuner_marginal_sample"
 
 
 @dataclass(slots=True)
@@ -81,54 +91,87 @@ async def _measure(session: AsyncSession) -> tuple[int, float]:
     return trades, net_r
 
 
-async def tune(session: AsyncSession) -> list[Adjustment]:
-    """Regle l'exigence de confiance d'apres ce que les trades ont donne."""
-    trades, net_r = await _measure(session)
-    if trades < MIN_SAMPLE:
-        return []
+async def _marginal_band(session: AsyncSession) -> ShadowStats:
+    """Ce que valent les opportunites ecartees pour la seule raison du seuil."""
+    trades = await decision_repo.list_shadow_trades(
+        session, since=datetime.now(tz=UTC) - timedelta(days=WINDOW_DAYS)
+    )
+    return compute_stats([item for item in trades if item.marginal])
 
-    moyenne = net_r / trades
+
+async def tune(session: AsyncSession) -> list[Adjustment]:
+    """Regle l'exigence de confiance d'apres ce que chaque bande a donne."""
+    trades, net_r = await _measure(session)
+    bande = await _marginal_band(session)
+    # La bande marginale est prouvee quand elle a assez d'issues ET un
+    # avantage franc. C'est elle, et elle seule, qui autorise a descendre sous
+    # la reference posee par l'humain.
+    bande_prouvee = bande.closed >= MIN_SAMPLE and (bande.average_r or 0.0) > MIN_EDGE
+
     reglages = await ai_repo.get_settings(session)
     courant = float(reglages.min_opportunity_confidence)
-
     # La reference est saisie au premier passage : c'est la valeur que
-    # l'humain avait posee, et le regleur n'ira jamais en dessous sans capteur.
+    # l'humain avait posee.
     reference = float(await settings_repo.get_setting(session, SETTING_BASELINE, courant))
-    dernier = int(await settings_repo.get_setting(session, SETTING_SAMPLE, 0) or 0)
-    if trades <= dernier:
-        # Un pas doit etre paye d'un denouement neuf, sinon la meme mesure
-        # ferait marcher l'exigence jusqu'a son plafond.
-        return []
+    moyenne = net_r / trades if trades else 0.0
 
-    if moyenne < -MIN_EDGE:
-        cible = courant + STEP
-        sens = "relevee"
-    elif moyenne > MIN_EDGE and courant > reference:
-        cible = courant - STEP
-        sens = "abaissee"
+    if trades >= MIN_SAMPLE and moyenne < -MIN_EDGE:
+        cible, sens, compteur, echantillon = (
+            courant + STEP,
+            "relevee",
+            SETTING_SAMPLE,
+            trades,
+        )
+        justification = f"{trades} trade(s) clos a {moyenne:+.2f} R de moyenne"
+    elif trades >= MIN_SAMPLE and moyenne > MIN_EDGE and courant > reference:
+        # Le regleur defait sa propre hausse : la performance s'est redressee.
+        cible, sens, compteur, echantillon = (
+            courant - STEP,
+            "abaissee",
+            SETTING_SAMPLE,
+            trades,
+        )
+        justification = f"{trades} trade(s) clos a {moyenne:+.2f} R de moyenne"
+    elif bande_prouvee and courant > MARGINAL_FLOOR:
+        # Descente sous la reference, sur preuve de la bande mesuree.
+        cible, sens, compteur, echantillon = (
+            courant - STEP,
+            "abaissee",
+            SETTING_MARGINAL_SAMPLE,
+            bande.closed,
+        )
+        justification = (
+            f"{bande.closed} simulation(s) de la bande a {bande.average_r:+.2f} R de moyenne"
+        )
     else:
         return []
 
-    cible = round(min(max(cible, reference), CEILING), 4)
+    dernier = int(await settings_repo.get_setting(session, compteur, 0) or 0)
+    if echantillon <= dernier:
+        # Un pas doit etre paye d'un denouement neuf, sinon la meme mesure
+        # ferait marcher l'exigence jusqu'a sa borne.
+        return []
+
+    plancher = MARGINAL_FLOOR if bande_prouvee else reference
+    cible = round(min(max(cible, plancher), CEILING), 4)
     if abs(cible - courant) < 1e-9:
-        # Deja contre sa reference ou son plafond : rien a ecrire.
+        # Deja contre sa borne : rien a ecrire.
         return []
 
     await ai_repo.update_settings(session, {"min_opportunity_confidence": cible})
     await settings_repo.set_setting(session, SETTING_BASELINE, reference)
-    await settings_repo.set_setting(session, SETTING_SAMPLE, trades)
+    await settings_repo.set_setting(session, compteur, echantillon)
 
     message = (
         f"Exigence de confiance {sens} de {courant:.2f} a {cible:.2f} : "
-        f"{trades} trade(s) clos a {moyenne:+.2f} R de moyenne sur "
-        f"{WINDOW_DAYS} jours."
+        f"{justification} sur {WINDOW_DAYS} jours."
     )
     logger.info("Reglage autonome : %s", message)
     await journal.log(event="learning_tuned", message=message, category="system")
     return [
         Adjustment(
             key="min_opportunity_confidence",
-            sample=trades,
+            sample=echantillon,
             before=courant,
             after=cible,
             message=message,

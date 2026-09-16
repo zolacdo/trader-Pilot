@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.models.core import utcnow
 from app.models.intelligence import DecisionSource, StrategyPerformance
 from app.repositories import ai_repo
 from app.services.learning import tuner
@@ -95,6 +96,71 @@ async def test_le_seuil_ne_descend_jamais_sous_la_reference_humaine(session) -> 
     assert await tuner.tune(session) == []
     reglages = await ai_repo.get_settings(session)
     assert reglages.min_opportunity_confidence == pytest.approx(0.75)
+
+
+async def _marginale(session, r_multiple: float, index: int = 0) -> None:
+    """Une simulation de la bande marginale, deja close."""
+    from app.models.enums import Direction
+    from app.models.intelligence import ShadowOutcome, ShadowTrade
+    from app.repositories import decision_repo
+
+    await decision_repo.save_shadow_trade(
+        session,
+        ShadowTrade(
+            symbol=f"SYM{index:02d}USD",
+            broker_symbol=f"SYM{index:02d}USDm",
+            outcome=ShadowOutcome.WOULD_BUY,
+            direction=Direction.BUY,
+            entry_price=100.0,
+            stop_loss=98.0,
+            take_profit=104.0,
+            marginal=True,
+            r_multiple=r_multiple,
+            result="WIN" if r_multiple > 0 else "LOSS",
+            closed_at=utcnow(),
+            close_price=104.0 if r_multiple > 0 else 98.0,
+        ),
+    )
+
+
+async def test_le_seuil_descend_sous_la_reference_quand_la_bande_gagne(session) -> None:
+    """Le capteur debloque ce que la reference interdisait faute de mesure."""
+    for index in range(10):
+        await _marginale(session, r_multiple=1.5, index=index)
+
+    decisions = await tuner.tune(session)
+
+    assert [item.key for item in decisions] == ["min_opportunity_confidence"]
+    reglages = await ai_repo.get_settings(session)
+    assert reglages.min_opportunity_confidence == pytest.approx(0.73)
+
+
+async def test_une_bande_insuffisante_ne_franchit_pas_la_reference(session) -> None:
+    """Neuf simulations ne prouvent rien : la reference tient."""
+    for index in range(9):
+        await _marginale(session, r_multiple=1.5, index=index)
+
+    assert await tuner.tune(session) == []
+    reglages = await ai_repo.get_settings(session)
+    assert reglages.min_opportunity_confidence == pytest.approx(0.75)
+
+
+async def test_une_bande_perdante_ne_fait_rien_descendre(session) -> None:
+    for index in range(12):
+        await _marginale(session, r_multiple=-1.0, index=index)
+
+    assert await tuner.tune(session) == []
+
+
+async def test_le_seuil_ne_descend_pas_sous_le_plancher_absolu(session) -> None:
+    """Meme prouvee, la bande ne fait pas tomber l'exigence a rien."""
+    await ai_repo.update_settings(
+        session, {"min_opportunity_confidence": tuner.MARGINAL_FLOOR}
+    )
+    for index in range(10):
+        await _marginale(session, r_multiple=1.5, index=index)
+
+    assert await tuner.tune(session) == []
 
 
 async def test_le_seuil_ne_depasse_pas_son_plafond(session) -> None:

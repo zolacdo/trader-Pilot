@@ -213,6 +213,28 @@ async def save_shadow_trade(session: AsyncSession, trade: ShadowTrade) -> Shadow
     return trade
 
 
+async def open_shadow_trades(
+    session: AsyncSession, *, marginal: bool | None = None, limit: int = 500
+) -> list[ShadowTrade]:
+    """Simulations encore en cours, celles qui restent a mesurer.
+
+    Une simulation sans niveaux -- un WOULD_SKIP -- est ecartee : il n'y a
+    rien a suivre, et la garder dans la liste ferait demander des bougies pour
+    rien a chaque tour.
+    """
+    statement = (
+        select(ShadowTrade)
+        .where(ShadowTrade.closed_at.is_(None))  # type: ignore[union-attr]
+        .where(ShadowTrade.entry_price.is_not(None))  # type: ignore[union-attr]
+        .where(ShadowTrade.stop_loss.is_not(None))  # type: ignore[union-attr]
+    )
+    if marginal is not None:
+        statement = statement.where(ShadowTrade.marginal.is_(marginal))  # type: ignore[union-attr]
+    statement = statement.order_by(ShadowTrade.opened_at.asc()).limit(limit)  # type: ignore[attr-defined]
+    result = await session.exec(statement)
+    return list(result.all())
+
+
 async def list_shadow_trades(
     session: AsyncSession,
     *,

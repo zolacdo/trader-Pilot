@@ -13,7 +13,7 @@ n'est inventee pour remplir un tableau.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Any
 
@@ -85,6 +85,26 @@ def build_shadow_trade(
         take_profit=levels.take_profits[0] if levels and levels.take_profits else None,
         volume=volume,
         source=outcome.source,
+    )
+
+
+# Largeur de la bande mesuree sous le seuil de confiance. Un dixieme : c'est
+# exactement ce que cinq pas du regleur ouvriraient, donc ce qu'il faut avoir
+# mesure avant de le laisser descendre. Plus large, on melangerait des
+# qualites trop differentes pour conclure.
+MARGINAL_MARGIN = 0.10
+
+
+def marginal_context(context: Any) -> Any:
+    """Le meme contexte, avec l'exigence de confiance abaissee d'un cran.
+
+    Rejouer la decision avec ce contexte repond a une question precise :
+    « cette opportunite passait-elle, au seuil d'en dessous ? ». Si oui, le
+    seuil etait le SEUL obstacle, et elle merite d'etre mesuree. Si non, autre
+    chose la refusait et elle n'apprendrait rien sur le seuil.
+    """
+    return replace(
+        context, min_confidence=max(0.0, float(context.min_confidence) - MARGINAL_MARGIN)
     )
 
 
@@ -250,6 +270,7 @@ def _engine_of(trade: ShadowTrade, mapping: Mapping[int, ShadowEngine]) -> Shado
 
 __all__ = [
     "ENGINE_LABELS",
+    "MARGINAL_MARGIN",
     "ShadowEngine",
     "ShadowReport",
     "ShadowStats",
@@ -257,5 +278,6 @@ __all__ = [
     "build_shadow_trade",
     "close_shadow_trade",
     "compute_stats",
+    "marginal_context",
     "outcome_for",
 ]

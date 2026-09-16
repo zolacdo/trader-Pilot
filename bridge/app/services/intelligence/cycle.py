@@ -34,7 +34,7 @@ from app.services.decision import DecisionContext, DecisionThresholds
 from app.services.decision.circuit_breaker import circuit_breaker
 from app.services.decision.engine import DecisionOutcome, decision_engine
 from app.services.decision.inputs import ConsensusView
-from app.services.decision.shadow import build_shadow_trade
+from app.services.decision.shadow import build_shadow_trade, marginal_context
 from app.services.economic_calendar.engine import economic_calendar_engine
 from app.services.intelligence.assembly import build_bundle
 from app.services.market_data.engine import MarketDataEngine
@@ -268,8 +268,29 @@ async def _analyse_symbol(
         simulation = build_shadow_trade(
             verdict, draft.levels, decision_id=enregistrement.id
         )
+        simulation.broker_symbol = result.broker_symbol
         await decision_repo.save_shadow_trade(session, simulation)
         report.shadow_trades += 1
+    elif not verdict.tradable:
+        # Bande marginale. On rejoue la meme decision avec l'exigence de
+        # confiance abaissee d'un cran : si elle passe alors, le seuil etait le
+        # SEUL obstacle, et cette opportunite merite d'etre mesuree pendant que
+        # le trading continue normalement.
+        #
+        # C'est le capteur qui manquait pour abaisser le seuil autrement qu'a
+        # l'aveugle : les opportunites sous le seuil sont ecartees avant
+        # d'exister, et le shadow mode ne les enregistre que lorsqu'il est
+        # actif -- donc quand plus rien ne part au broker, sans rien a quoi les
+        # comparer.
+        marge = decision_engine.decide(marginal_context(contexte))
+        if marge.tradable:
+            simulation = build_shadow_trade(
+                marge, draft.levels, decision_id=enregistrement.id
+            )
+            simulation.marginal = True
+            simulation.broker_symbol = result.broker_symbol
+            await decision_repo.save_shadow_trade(session, simulation)
+            report.shadow_trades += 1
 
     if opportunite is not None and draft.qualified:
         issue.notified = await _notify_opportunity(
