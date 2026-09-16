@@ -198,6 +198,25 @@ async def test_un_fantome_n_est_ni_publie_ni_execute(
     assert outcome.shadow_signal.published_at is None
 
 
+async def test_un_seul_fantome_a_la_fois_par_sens(
+    session, market: MarketDataEngine, watcher: WatcherEngine, config: WatcherConfig
+) -> None:
+    """Les fantomes ont leur propre anti-doublon, sinon ils inondent la table.
+
+    ``portfolio_state`` exclut les fantomes pour ne pas etouffer les vrais
+    signaux -- mais sans garde interne, le moteur en recreerait un a chaque
+    tour de 90 secondes sur le meme setup, soit des milliers par jour.
+    """
+    premier = await watcher.analyse(session, market, SYMBOL, SYMBOL, config)
+    assert premier.shadow_signal is not None
+
+    second = await watcher.analyse(session, market, SYMBOL, SYMBOL, config)
+
+    assert second.shadow_signal is None
+    ouverts = await repository.open_signals(session, SYMBOL)
+    assert len([item for item in ouverts if item.shadow]) == 1
+
+
 async def test_aucun_fantome_si_un_autre_garde_fou_refuse(
     session, market: MarketDataEngine, watcher: WatcherEngine, config: WatcherConfig
 ) -> None:

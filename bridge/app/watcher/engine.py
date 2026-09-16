@@ -202,7 +202,7 @@ class WatcherEngine:
         # plancher fantome a la place du seuil.
         if not outcome.decision.is_tradable and levels is not None and card is not None:
             outcome.shadow_signal = await self._create_shadow(
-                session, context, best_direction, levels, card, outcome, config, state, moment
+                session, context, best_direction, levels, card, outcome, config, moment
             )
 
         await self._record(session, outcome, context, moment)
@@ -217,7 +217,6 @@ class WatcherEngine:
         card: ScoreCard,
         outcome: AnalysisOutcome,
         config: WatcherConfig,
-        state: risk.PortfolioState,
         now: datetime,
     ) -> WatcherSignal | None:
         """Cree le signal qu'un seuil plus bas aurait publie, s'il y en a un."""
@@ -228,8 +227,14 @@ class WatcherEngine:
             # qu'il explore est vide par construction.
             return None
 
+        # L'etat des fantomes, pas celui des vrais signaux : c'est lui qui
+        # porte leur anti-doublon. Sans cela un fantome renaitrait a chaque
+        # tour sur le meme setup, des milliers par jour.
+        etat = await repository.portfolio_state(
+            session, context.symbol, direction, now, shadow=True
+        )
         abaisse = replace(config, minimum_score=config.shadow_score)
-        verdict = risk.evaluate(context, direction, levels, card, abaisse, state, now)
+        verdict = risk.evaluate(context, direction, levels, card, abaisse, etat, now)
         if not verdict.approved:
             return None
 

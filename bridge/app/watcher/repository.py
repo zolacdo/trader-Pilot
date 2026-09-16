@@ -123,27 +123,31 @@ async def signals_since(
     return list(result.all())
 
 
-async def count_signals_since(session: AsyncSession, since: datetime) -> int:
-    """Signaux reels depuis cette date. Les fantomes ne comptent pas."""
+async def count_signals_since(
+    session: AsyncSession, since: datetime, shadow: bool = False
+) -> int:
+    """Signaux d'une population depuis cette date, jamais les deux melangees."""
     result = await session.exec(
         select(func.count())
         .select_from(WatcherSignal)
         .where(WatcherSignal.created_at >= since)
-        .where(WatcherSignal.shadow.is_(False))  # type: ignore[union-attr]
+        .where(WatcherSignal.shadow.is_(shadow))  # type: ignore[union-attr]
     )
     return int(result.one() or 0)
 
 
-async def last_signal_at(session: AsyncSession, symbol: str) -> datetime | None:
-    """Date du dernier signal reel sur cet instrument, quel que soit son sens.
+async def last_signal_at(
+    session: AsyncSession, symbol: str, shadow: bool = False
+) -> datetime | None:
+    """Date du dernier signal de cette population sur cet instrument.
 
     Elle sert a tenir la cadence : un fantome ne doit pas faire croire qu'un
-    signal vient de partir sur cet instrument.
+    vrai signal vient de partir, ni l'inverse.
     """
     result = await session.exec(
         select(WatcherSignal.created_at)
         .where(WatcherSignal.symbol == symbol.strip().upper())
-        .where(WatcherSignal.shadow.is_(False))  # type: ignore[union-attr]
+        .where(WatcherSignal.shadow.is_(shadow))  # type: ignore[union-attr]
         .order_by(WatcherSignal.created_at.desc())  # type: ignore[attr-defined]
         .limit(1)
     )
@@ -155,22 +159,30 @@ def _start_of_day(now: datetime) -> datetime:
 
 
 async def portfolio_state(
-    session: AsyncSession, symbol: str, direction: Direction, now: datetime | None = None
+    session: AsyncSession,
+    symbol: str,
+    direction: Direction,
+    now: datetime | None = None,
+    shadow: bool = False,
 ) -> PortfolioState:
-    """Etat courant du watcher, tel que le Risk Manager en a besoin."""
+    """Etat courant du watcher, tel que le Risk Manager en a besoin.
+
+    Les deux populations ont chacune leur propre etat, et ne se voient jamais.
+    Un fantome compte dans l'anti-doublon des fantomes, jamais dans celui des
+    vrais signaux : le melanger etoufferait la decision qu'il sert a eclairer,
+    et l'oublier tout court ferait renaitre un fantome par tour de 90 secondes
+    sur le meme setup.
+    """
     moment = now or utcnow()
     canonical = symbol.strip().upper()
-    # Les fantomes sont exclus de bout en bout : ils alimenteraient sinon
-    # l'anti-doublon et le plafond d'exposition, et une mesure etoufferait la
-    # decision qu'elle sert a eclairer.
-    opened = [item for item in await open_signals(session) if not item.shadow]
+    opened = [item for item in await open_signals(session) if item.shadow is shadow]
     same_symbol = [item for item in opened if item.symbol == canonical]
     return PortfolioState(
         active_signals=len(opened),
-        signals_today=await count_signals_since(session, _start_of_day(moment)),
+        signals_today=await count_signals_since(session, _start_of_day(moment), shadow=shadow),
         active_same_symbol=len(same_symbol),
         active_same_direction=any(item.direction is direction for item in same_symbol),
-        last_signal_at=await last_signal_at(session, canonical),
+        last_signal_at=await last_signal_at(session, canonical, shadow=shadow),
     )
 
 
