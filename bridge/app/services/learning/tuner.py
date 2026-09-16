@@ -6,18 +6,20 @@ decision humaine ne vaut donc plus. ``recorder.py`` continue de ne faire que
 mesurer -- c'est une separation des roles, pas une interdiction : c'est ici,
 et seulement ici, que la mesure devient un reglage.
 
-UNE ASYMETRIE ASSUMEE, faute de capteur. Une perte mesuree justifie de
-**lever** l'exigence : la preuve est la, dans les trades reellement clos. Rien
-ne mesure en revanche ce qui se passe SOUS le seuil -- ces opportunites sont
-ecartees avant d'exister, et le shadow mode du CDC2 ne les enregistre que
-lorsqu'il est actif, c'est-a-dire quand plus rien ne part au broker. Il n'y a
-donc aucune population simultanee a comparer, comme le fait la bande fantome
-du watcher.
+DEUX MESURES, DEUX SENS. Une perte constatee justifie de **lever** l'exigence :
+la preuve est la, dans les trades reellement clos. La **baisser** demande de
+savoir ce que le seuil ecarte, et ces opportunites sont refusees avant
+d'exister -- le shadow mode du CDC2 ne les enregistrait que lorsqu'il etait
+actif, c'est-a-dire quand plus rien ne part au broker, donc sans rien a quoi
+les comparer.
 
-Le regleur peut donc toujours defaire ses propres hausses quand la performance
-se redresse -- c'est le sens « baisser » -- mais il ne descend pas sous la
-reference posee par l'humain. Le jour ou un capteur couvrira cette zone, le
-plancher pourra ceder ; le construire d'abord, l'ouvrir ensuite.
+C'est la bande marginale qui a comble ce vide : une opportunite ecartee pour
+la seule raison du seuil est desormais enregistree et suivie pendant que le
+systeme trade. Le regleur defait donc ses propres hausses sur la performance
+reelle, et descend sous la reference posee par l'humain sur la preuve de cette
+bande -- jamais l'une pour l'autre, deux compteurs le garantissent. Il
+s'arrete a ``MARGINAL_FLOOR``, plancher partage avec la bande : en dessous,
+l'exigence cesserait d'etre selective, ce qui est un changement de nature.
 
 Les memes garde-fous que le watcher, et pour les memes raisons : un pas
 unitaire, un plafond, une bande morte contre le broutage, et l'exigence d'une
@@ -34,7 +36,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.logging_config import get_logger
 from app.repositories import ai_repo, decision_repo, pattern_repo, settings_repo
 from app.services import journal
-from app.services.decision.shadow import ShadowStats, compute_stats
+
+# ``MARGINAL_FLOOR`` vient de la : c'est a la fois le plancher du regleur et
+# celui de la bande qui l'autorise a descendre. Deux constantes de meme sens
+# dans deux fichiers finiraient par diverger, et la bande mesurerait alors un
+# espace different de celui que le seuil peut occuper.
+from app.services.decision.shadow import MARGINAL_FLOOR, ShadowStats, compute_stats
 
 logger = get_logger(__name__)
 
@@ -52,11 +59,6 @@ STEP = 0.02
 # Au-dela, l'exigence n'accepterait plus rien : ce ne serait plus un reglage
 # mais un arret deguise, et un arret doit se decider, pas se subir.
 CEILING = 0.95
-
-# Plancher absolu, une fois la bande marginale prouvee rentable. En dessous,
-# l'exigence n'ecarterait plus grand-chose et le systeme cesserait d'etre
-# selectif : ce serait un changement de nature, pas un reglage.
-MARGINAL_FLOOR = 0.40
 
 SETTING_BASELINE = "learning.confidence_baseline"
 SETTING_SAMPLE = "learning.tuner_sample"

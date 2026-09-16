@@ -160,6 +160,36 @@ async def test_sans_niveaux_rien_ne_part(
     assert espion.appels == []
 
 
+def test_la_bande_mesuree_couvre_tout_l_espace_ouvrable() -> None:
+    """Une fenêtre fixe sous le seuil peut rater toute la distribution.
+
+    Mesuré le 16/09/2026 : dix décisions d'affilée entre 0,352 et 0,471 de
+    confiance, pour un seuil à 0,60. Une bande de 0,10 mesurait
+    « 0,50 à 0,60 » — vide, donc aucune preuve, donc un seuil immobile et un
+    cycle qui n'ouvrira jamais rien. Un état stable où il ne trade ni
+    n'apprend.
+
+    La bande descend maintenant jusqu'au plancher absolu du régleur : elle
+    couvre exactement l'espace que le seuil pourrait un jour occuper, ni plus
+    (ce serait mesurer l'inatteignable) ni moins.
+    """
+    from dataclasses import dataclass
+
+    from app.services.decision.shadow import MARGINAL_FLOOR, marginal_context
+
+    @dataclass(slots=True)
+    class FauxContexte:
+        min_confidence: float
+
+    assert marginal_context(FauxContexte(min_confidence=0.60)).min_confidence == (
+        pytest.approx(MARGINAL_FLOOR)
+    )
+    # Déjà au plancher : la bande est vide par construction, et c'est correct.
+    assert marginal_context(
+        FauxContexte(min_confidence=MARGINAL_FLOOR)
+    ).min_confidence == pytest.approx(MARGINAL_FLOOR)
+
+
 async def test_une_panne_du_moteur_ne_leve_pas(
     session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:

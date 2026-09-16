@@ -88,23 +88,35 @@ def build_shadow_trade(
     )
 
 
-# Largeur de la bande mesuree sous le seuil de confiance. Un dixieme : c'est
-# exactement ce que cinq pas du regleur ouvriraient, donc ce qu'il faut avoir
-# mesure avant de le laisser descendre. Plus large, on melangerait des
-# qualites trop differentes pour conclure.
-MARGINAL_MARGIN = 0.10
+# Plancher de la bande mesuree, et plancher absolu du regleur : les deux sont
+# la meme valeur, et c'est voulu. La bande doit couvrir exactement l'espace que
+# le seuil pourrait un jour occuper -- pas plus, ce serait mesurer
+# l'inatteignable ; pas moins, et la mesure raterait sa cible.
+#
+# Une fenetre fixe sous le seuil l'a ratee : le 16/09/2026, dix decisions
+# d'affilee entre 0,352 et 0,471 de confiance pour un seuil a 0,60. Une bande
+# de 0,10 mesurait « 0,50 a 0,60 », donc rien. Sans preuve, le seuil ne bouge
+# pas ; sans mouvement, le cycle n'ouvre jamais rien : un etat stable ou il ne
+# trade ni n'apprend.
+#
+# En dessous de ce plancher, l'exigence n'ecarterait plus grand-chose et le
+# systeme cesserait d'etre selectif : ce serait un changement de nature.
+MARGINAL_FLOOR = 0.40
 
 
 def marginal_context(context: Any) -> Any:
-    """Le meme contexte, avec l'exigence de confiance abaissee d'un cran.
+    """Le meme contexte, l'exigence de confiance ramenee a son plancher.
 
     Rejouer la decision avec ce contexte repond a une question precise :
-    « cette opportunite passait-elle, au seuil d'en dessous ? ». Si oui, le
-    seuil etait le SEUL obstacle, et elle merite d'etre mesuree. Si non, autre
-    chose la refusait et elle n'apprendrait rien sur le seuil.
+    « cette opportunite passait-elle, quelque part sous le seuil ? ». Si oui,
+    le seuil etait le SEUL obstacle, et elle merite d'etre mesuree. Si non,
+    autre chose la refusait et elle n'apprendrait rien sur le seuil.
+
+    Un seuil deja au plancher rend un contexte identique : la bande est alors
+    vide par construction, ce qui est exact.
     """
     return replace(
-        context, min_confidence=max(0.0, float(context.min_confidence) - MARGINAL_MARGIN)
+        context, min_confidence=min(float(context.min_confidence), MARGINAL_FLOOR)
     )
 
 
@@ -270,7 +282,7 @@ def _engine_of(trade: ShadowTrade, mapping: Mapping[int, ShadowEngine]) -> Shado
 
 __all__ = [
     "ENGINE_LABELS",
-    "MARGINAL_MARGIN",
+    "MARGINAL_FLOOR",
     "ShadowEngine",
     "ShadowReport",
     "ShadowStats",
