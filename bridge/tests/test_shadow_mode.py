@@ -419,6 +419,34 @@ async def test_la_performance_shadow_est_exposee(
     assert "simul" in charge["disclaimer"].lower()
 
 
+async def test_la_bande_marginale_est_comptee_a_part(
+    session: AsyncSession, auth_client: AsyncClient
+) -> None:
+    """Deux natures de simulation ne se melangent pas dans un meme bilan.
+
+    Le mode observation enregistre quand RIEN ne part au broker. La bande
+    marginale, elle, enregistre ce que le seuil de confiance ecarte pendant
+    que le trading continue normalement. Confondues, les deux perdent leur
+    sens : la premiere decrit un systeme a l'arret, la seconde ce qu'il laisse
+    passer en marchant.
+    """
+    observation = build_shadow_trade(_verdict(action=DecisionAction.BUY))
+    observation.r_multiple = -1.0
+    marginale = build_shadow_trade(_verdict(action=DecisionAction.BUY))
+    marginale.marginal = True
+    marginale.r_multiple = 2.0
+    for trace in (observation, marginale):
+        await decision_repo.save_shadow_trade(session, trace)
+    await session.commit()
+
+    charge = (await auth_client.get(f"{PREFIX}/shadow/performance")).json()
+
+    assert charge["overall"]["closed"] == 1
+    assert charge["overall"]["averageR"] == pytest.approx(-1.0)
+    assert charge["marginalBand"]["overall"]["closed"] == 1
+    assert charge["marginalBand"]["overall"]["averageR"] == pytest.approx(2.0)
+
+
 async def test_la_performance_shadow_exige_un_appairage(client: AsyncClient) -> None:
     reponse = await client.get(f"{PREFIX}/shadow/performance")
 

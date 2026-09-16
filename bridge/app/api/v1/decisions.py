@@ -231,7 +231,15 @@ async def shadow_performance(
     trades = await decision_repo.list_shadow_trades(session, since=since, symbol=symbol)
     decision_ids = [trade.decision_id for trade in trades if trade.decision_id is not None]
     labels = await decision_repo.engine_labels(session, decision_ids)
-    report = build_report(trades, labels)
+
+    # Deux natures de simulation, deux bilans. Le mode observation enregistre
+    # quand RIEN ne part au broker ; la bande marginale enregistre ce que le
+    # seuil de confiance ecarte pendant que le trading continue normalement.
+    # Melangees, elles perdent leur sens : la premiere decrit un systeme a
+    # l'arret, la seconde ce qu'il laisse passer en marchant. Et c'est la
+    # seconde, seule, qui autorise le regleur a baisser ce seuil.
+    report = build_report([item for item in trades if not item.marginal], labels)
+    marginal = build_report([item for item in trades if item.marginal], labels)
     return {
         "days": days,
         "symbol": symbol,
@@ -240,6 +248,7 @@ async def shadow_performance(
             "d'aucune performance réelle."
         ),
         **report.to_dict(),
+        "marginalBand": marginal.to_dict(),
     }
 
 
