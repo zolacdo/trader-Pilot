@@ -163,6 +163,13 @@ class WatcherConfig:
     # Types d'entree ecartes par l'apprentissage. Se defait depuis l'app :
     # une decision n'est qu'un reglage, jamais du code.
     disabled_entry_types: list[str] = field(default_factory=list)
+    # Bande dans laquelle un poids de critere peut etre deplace. Le plancher
+    # n'est pas zero : eteindre un critere serait un changement de structure,
+    # pas un reglage, et un critere muet ne peut plus jamais se racheter
+    # puisqu'il ne pese plus sur aucun resultat a mesurer. Le plafond empeche
+    # un seul critere de decider a la place des dix.
+    weight_floor: float = 2.0
+    weight_ceiling: float = 30.0
 
     @property
     def simple_format(self) -> bool:

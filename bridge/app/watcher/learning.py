@@ -1,11 +1,21 @@
-"""Apprentissage sur les pertes (CDC3 section 41).
+"""Apprentissage autonome du watcher (CDC3 section 41).
+
+Trois leviers, mesures puis actionnes sans intervention :
+
+* **ecarter** un type d'entree ou un instrument qui n'a jamais gagne ;
+* **regler le seuil** de publication dans les deux sens -- il baisse quand la
+  bande mesuree sous lui rapporte, il monte quand le publie perd ;
+* **deplacer les poids** du critere le plus trompeur vers le plus fiable, a
+  somme constante.
 
 Trois regles dont ce module ne sort jamais :
 
 1. aucune decision sous ``MIN_SAMPLE``. Sur une vingtaine d'operations, tout
    ajustement fin ajusterait du bruit ;
 2. aucune ecriture hors des bornes declarees dans la configuration. Un
-   parametre sans borne ecrite ne peut pas etre touche du tout ;
+   parametre sans borne ecrite ne peut pas etre touche du tout -- pour les
+   seuils c'est ``learning_bounds``, pour les poids la bande
+   ``weight_floor`` / ``weight_ceiling`` ;
 3. aucune decision silencieuse. Chaque ecriture est journalisee avec son
    chiffrage, et l'ordonnanceur la publie dans le canal ;
 4. aucun bannissement sur la foi du seul suivi. Le suivi ne modelise pas le
@@ -29,7 +39,7 @@ from app.config.logging_config import get_logger
 from app.models.core import as_utc, utcnow
 from app.services import journal
 from app.watcher import performance, repository
-from app.watcher.config import WatcherConfig, update_config
+from app.watcher.config import DEFAULT_WEIGHTS, WatcherConfig, update_config
 from app.watcher.models import STRATEGY_VERSION
 from app.watcher.performance import MIN_SAMPLE
 
@@ -53,6 +63,9 @@ class Decision:
 # descendre de 70 a 65, chaque pas etant re-mesure : une commande qui saute
 # d'un coup ne laisse jamais voir l'effet du pas precedent.
 THRESHOLD_STEP = 1.0
+# Meme prudence pour les poids, avec en plus une contrainte de somme : le
+# point retire a un critere est donne a un autre, jamais cree.
+WEIGHT_STEP = 1.0
 
 
 def clamp(config: WatcherConfig, name: str, value: float) -> float | None:
@@ -126,6 +139,12 @@ async def review(session: AsyncSession, config: WatcherConfig) -> list[Decision]
     if seuil is not None:
         decisions.append(seuil)
 
+    # Les poids se reglent sur une autre grandeur -- le pouvoir discriminant
+    # de chaque critere -- et n'ecrivent pas la meme clef que le seuil.
+    poids = await _adjust_weights(session, config)
+    if poids is not None:
+        decisions.append(poids)
+
     for decision in decisions:
         logger.info("Apprentissage : %s", decision.message)
         await journal.log(
@@ -134,6 +153,94 @@ async def review(session: AsyncSession, config: WatcherConfig) -> list[Decision]
             category="system",
         )
     return decisions
+
+
+def _mean_ratios(signals: list[Any]) -> dict[str, float]:
+    """Ratio moyen de chaque critere sur ces operations.
+
+    Un critere absent de assez d'operations est ecarte : une moyenne sur trois
+    mesures ne dit rien, et le comparer a une moyenne sur vingt serait pire
+    que de l'ignorer.
+    """
+    total: dict[str, float] = {}
+    compte: dict[str, int] = {}
+    for signal in signals:
+        criteria = (signal.score_breakdown or {}).get("criteria") or []
+        for item in criteria:
+            key = str(item.get("key") or "")
+            ratio = item.get("ratio")
+            if not key or not isinstance(ratio, (int, float)):
+                continue
+            total[key] = total.get(key, 0.0) + float(ratio)
+            compte[key] = compte.get(key, 0) + 1
+    return {key: total[key] / compte[key] for key in total if compte[key] >= MIN_SAMPLE}
+
+
+def _discrimination(gagnants: list[Any], perdants: list[Any]) -> dict[str, float]:
+    """Pouvoir discriminant de chaque critere, en ecart de ratio moyen.
+
+    Positif : le critere etait haut quand l'operation marchait. Negatif : il
+    etait haut quand elle ratait -- il ne mesure pas ce qu'il croit mesurer.
+    """
+    moyennes_g = _mean_ratios(gagnants)
+    moyennes_p = _mean_ratios(perdants)
+    communs = set(moyennes_g) & set(moyennes_p)
+    return {key: moyennes_g[key] - moyennes_p[key] for key in communs}
+
+
+async def _adjust_weights(
+    session: AsyncSession, config: WatcherConfig
+) -> Decision | None:
+    """Transfere un point de poids du critere le plus trompeur au plus fiable.
+
+    Un transfert, jamais une inflation : la somme des poids ne bouge pas, donc
+    la couverture -- qui se mesure contre ce total -- garde son sens. Deux
+    poids seulement changent par decision, et chacun reste dans la bande
+    ``weight_floor`` / ``weight_ceiling``.
+
+    Il faut les deux populations, chacune au-dessus de ``MIN_SAMPLE`` : sans
+    perdants, aucun critere n'est prouve fiable ; sans gagnants, aucun n'est
+    prouve trompeur.
+    """
+    since = utcnow() - timedelta(days=max(1, config.learning_window_days))
+    closed = await repository.closed_signals(
+        session, since=since, strategy_version=STRATEGY_VERSION
+    )
+    gagnants = [item for item in closed if (item.result_r or 0.0) > 0]
+    perdants = [item for item in closed if (item.result_r or 0.0) < 0]
+    if len(gagnants) < MIN_SAMPLE or len(perdants) < MIN_SAMPLE:
+        return None
+
+    pouvoir = _discrimination(gagnants, perdants)
+    if len(pouvoir) < 2:
+        return None
+    fiable = max(pouvoir, key=lambda key: pouvoir[key])
+    trompeur = min(pouvoir, key=lambda key: pouvoir[key])
+    if fiable == trompeur or pouvoir[trompeur] >= 0 or pouvoir[fiable] <= 0:
+        # Sans critere franchement trompeur ET franchement fiable, il n'y a
+        # rien a reprendre a personne.
+        return None
+
+    poids = {key: config.weight(key) for key in DEFAULT_WEIGHTS}
+    if poids.get(trompeur, 0.0) - WEIGHT_STEP < config.weight_floor:
+        return None
+    if poids.get(fiable, 0.0) + WEIGHT_STEP > config.weight_ceiling:
+        return None
+    poids[trompeur] -= WEIGHT_STEP
+    poids[fiable] += WEIGHT_STEP
+    await update_config(session, {"weights": poids})
+
+    return Decision(
+        key=f"{trompeur} -> {fiable}",
+        kind="weight",
+        sample=len(gagnants) + len(perdants),
+        message=(
+            f"Poids deplace de {trompeur} vers {fiable} : sur {len(gagnants)} gain(s) "
+            f"et {len(perdants)} perte(s), {trompeur} etait plus haut dans les pertes "
+            f"({pouvoir[trompeur]:+.2f}) et {fiable} dans les gains "
+            f"({pouvoir[fiable]:+.2f})."
+        ),
+    )
 
 
 async def _adjust_threshold(

@@ -139,6 +139,14 @@ learning_window_days: 30
 learning_bounds:
   minimum_score: [65, 80]
   minimum_rr: [1.2, 2.5]
+# Bande dans laquelle un poids de critere peut se deplacer. Le transfert est a
+# somme nulle : le point retire a un critere est donne a un autre, donc le
+# total reste 100 et la couverture -- mesuree contre ce total -- garde son sens.
+# Le plancher n'est pas zero : eteindre un critere serait un changement de
+# structure, et un critere muet ne peut plus jamais se racheter puisqu'il ne
+# pese plus sur aucun resultat mesurable.
+weight_floor: 2
+weight_ceiling: 30
 
 # --- mesure en avant de la bande sous le seuil --------------------------------
 # Un « fantome » est le signal que le systeme aurait publie si minimum_score
