@@ -326,6 +326,36 @@ class TestPerformance:
         values.update(kwargs)
         return WatcherSignal(**values)  # type: ignore[arg-type]
 
+    def test_repli_maximal_mesure_la_pire_descente(self) -> None:
+        """Une esperance positive avec un repli brutal n'est pas jouable.
+
+        C'est la mesure qui manquait pour juger la bande mesuree : +0,40 R par
+        operation ne dit rien du chemin parcouru pour y arriver.
+
+        Les signaux sont horodates dans l'ordre : le repli se lit sur la
+        courbe cumulee, donc la chronologie compte.
+        """
+        moments = [datetime(2024, 1, 1, 10 + index, tzinfo=UTC) for index in range(4)]
+        signaux = [
+            self._signal(1.0, created_at=moments[0]),
+            self._signal(-1.0, created_at=moments[1]),
+            self._signal(-1.0, created_at=moments[2]),
+            self._signal(2.0, created_at=moments[3]),
+        ]
+
+        report = performance.build_report(signaux, window_days=30)
+
+        # Courbe cumulee 1, 0, -1, 1 : sommet a 1, creux a -1.
+        assert report.max_drawdown_r == pytest.approx(2.0)
+        assert report.to_dict()["maxDrawdownR"] == pytest.approx(2.0)
+
+    def test_sans_perte_le_repli_est_nul(self) -> None:
+        report = performance.build_report(
+            [self._signal(1.0), self._signal(2.0)], window_days=30
+        )
+
+        assert report.max_drawdown_r == pytest.approx(0.0)
+
     def test_taux_de_reussite_calcule(self) -> None:
         signaux = [self._signal(3.0), self._signal(3.0), self._signal(-1.0)]
         report = performance.build_report(signaux, window_days=30)

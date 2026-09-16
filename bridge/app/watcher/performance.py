@@ -117,6 +117,11 @@ class PerformanceReport:
     signals_pending_result: int = 0
     max_win_streak: int = 0
     max_loss_streak: int = 0
+    # Plus forte descente de la courbe cumulee, en R. Une esperance positive
+    # ne suffit pas a juger une bande : +0,40 R par operation ne dit rien du
+    # chemin parcouru pour y arriver, et c'est ce chemin qu'un compte doit
+    # pouvoir encaisser.
+    max_drawdown_r: float = 0.0
     average_planned_rr: float | None = None
     recommendations: list[str] = field(default_factory=list)
 
@@ -134,6 +139,7 @@ class PerformanceReport:
             "signalsTotal": self.signals_total,
             "signalsOpen": self.signals_open,
             "signalsPendingResult": self.signals_pending_result,
+            "maxDrawdownR": self.max_drawdown_r,
             "maxWinStreak": self.max_win_streak,
             "maxLossStreak": self.max_loss_streak,
             "averagePlannedRr": self.average_planned_rr,
@@ -202,6 +208,7 @@ def build_report(signals: list[WatcherSignal], window_days: int) -> PerformanceR
     report.by_score = dict(sorted(groups["score"].items()))
 
     report.max_win_streak, report.max_loss_streak = _streaks(sequence)
+    report.max_drawdown_r = _drawdown(sequence)
     if planned:
         report.average_planned_rr = round(sum(planned) / len(planned), 2)
     report.recommendations = _recommendations(report)
@@ -213,6 +220,25 @@ def _add(group: dict[str, Bucket], key: str, result: float) -> None:
     if not bucket.label:
         bucket.label = key
     bucket.add(result)
+
+
+def _drawdown(results: list[float]) -> float:
+    """Plus forte descente de la courbe cumulee, en R (valeur positive).
+
+    La meme arithmetique existe dans ``app/services/decision/shadow.py`` pour
+    l'autre sous-systeme. La copie est deliberee : importer ce module tirerait
+    tout le graphe du moteur de decision dans le watcher pour huit lignes de
+    calcul, ce qui serait un mauvais echange. Si les deux sous-systemes sont
+    un jour unifies, c'est ici qu'il faudra regarder.
+    """
+    cumulative = 0.0
+    peak = 0.0
+    worst = 0.0
+    for value in results:
+        cumulative += value
+        peak = max(peak, cumulative)
+        worst = min(worst, cumulative - peak)
+    return round(abs(worst), 4)
 
 
 def _streaks(results: list[float]) -> tuple[int, int]:

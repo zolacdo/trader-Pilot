@@ -59,9 +59,14 @@ class _Body extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final Map<String, dynamic> publiee = bandMap(bandMap(payload, 'report'), 'overall');
-    final Map<String, dynamic> mesuree = bandMap(bandMap(payload, 'shadowBand'), 'overall');
-    final num? minimumSample = bandNum(bandMap(payload, 'report'), 'minimumSample');
+    // Le repli maximal se lit sur la courbe cumulée de toute la bande : il vit
+    // donc au niveau du rapport, pas dans le bloc `overall` qui n'agrège que
+    // des totaux insensibles à la chronologie.
+    final Map<String, dynamic> rapportPublie = bandMap(payload, 'report');
+    final Map<String, dynamic> rapportMesure = bandMap(payload, 'shadowBand');
+    final Map<String, dynamic> publiee = bandMap(rapportPublie, 'overall');
+    final Map<String, dynamic> mesuree = bandMap(rapportMesure, 'overall');
+    final num? minimumSample = bandNum(rapportPublie, 'minimumSample');
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -70,7 +75,12 @@ class _Body extends ConsumerWidget {
         const SizedBox(height: 12),
         const _ThresholdPivot(),
         const SizedBox(height: 12),
-        _Comparison(publiee: publiee, mesuree: mesuree),
+        _Comparison(
+          publiee: publiee,
+          mesuree: mesuree,
+          repliPublie: bandNum(rapportPublie, 'maxDrawdownR'),
+          repliMesure: bandNum(rapportMesure, 'maxDrawdownR'),
+        ),
         const SizedBox(height: 12),
         _Verdict(
           publiee: publiee,
@@ -162,10 +172,17 @@ class _ThresholdPivot extends ConsumerWidget {
 
 /// Les mêmes mesures des deux côtés, dans le même ordre.
 class _Comparison extends StatelessWidget {
-  const _Comparison({required this.publiee, required this.mesuree});
+  const _Comparison({
+    required this.publiee,
+    required this.mesuree,
+    required this.repliPublie,
+    required this.repliMesure,
+  });
 
   final Map<String, dynamic> publiee;
   final Map<String, dynamic> mesuree;
+  final num? repliPublie;
+  final num? repliMesure;
 
   @override
   Widget build(BuildContext context) {
@@ -177,9 +194,21 @@ class _Comparison extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Expanded(child: _BandColumn(title: 'Publié', band: publiee)),
+              Expanded(
+                child: _BandColumn(
+                  title: 'Publié',
+                  band: publiee,
+                  drawdown: repliPublie,
+                ),
+              ),
               const SizedBox(width: 12),
-              Expanded(child: _BandColumn(title: 'Écarté', band: mesuree)),
+              Expanded(
+                child: _BandColumn(
+                  title: 'Écarté',
+                  band: mesuree,
+                  drawdown: repliMesure,
+                ),
+              ),
             ],
           ),
         ],
@@ -189,10 +218,14 @@ class _Comparison extends StatelessWidget {
 }
 
 class _BandColumn extends StatelessWidget {
-  const _BandColumn({required this.title, required this.band});
+  const _BandColumn({required this.title, required this.band, required this.drawdown});
 
   final String title;
   final Map<String, dynamic> band;
+
+  /// Repli maximal de la bande, en R. Il vient du rapport et non du bloc
+  /// agrégé : seule la chronologie permet de le calculer.
+  final num? drawdown;
 
   @override
   Widget build(BuildContext context) {
@@ -225,6 +258,12 @@ class _BandColumn extends StatelessWidget {
           label: 'R total',
           value: _signedR(total),
           valueColor: _colorFor(total, theme),
+          monospace: true,
+        ),
+        DetailRow(
+          label: 'Repli maximal',
+          value: drawdown == null ? '--' : '-${drawdown!.toStringAsFixed(2)} R',
+          valueColor: (drawdown ?? 0) > 0 ? theme.colorScheme.error : null,
           monospace: true,
         ),
         DetailRow(
