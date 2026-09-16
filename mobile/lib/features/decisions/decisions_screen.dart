@@ -201,6 +201,68 @@ class _DecisionTile extends StatelessWidget {
   }
 }
 
+/// Bande marginale : ce que le seuil de confiance écarte, mesuré quand même.
+///
+/// Elle est distincte du mode observation. Celui-ci enregistre quand *rien* ne
+/// part au broker ; celle-ci enregistre pendant que le système trade, ce qui
+/// est précisément ce qui la rend comparable — et c'est elle, seule, qui
+/// autorise le Bridge à abaisser son exigence d'entrée.
+class _MarginalBandCard extends StatelessWidget {
+  const _MarginalBandCard({required this.overall});
+
+  final Map<String, dynamic> overall;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final Object? moyenne = overall['averageR'];
+    final String moyenneTexte =
+        moyenne is num ? '${moyenne > 0 ? '+' : ''}${moyenne.toStringAsFixed(2)} R' : '--';
+
+    return AppCard(
+      accent: true,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const SectionHeader(
+            title: 'Bande écartée par le seuil',
+            subtitle: 'Mesurée pendant que le système trade, jamais envoyée.',
+          ),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: MetricTile(
+                  label: 'Clôturées',
+                  value: '${overall['closed'] ?? 0}',
+                  caption: '${overall['simulated'] ?? 0} simulée(s)',
+                  compact: true,
+                ),
+              ),
+              Expanded(
+                child: MetricTile(
+                  label: 'Réussite',
+                  value: percentFromRatio(overall['winRate'], digits: 1),
+                  compact: true,
+                ),
+              ),
+              Expanded(
+                child: MetricTile(
+                  label: 'R moyen',
+                  value: moyenneTexte,
+                  valueColor: moyenne is num && moyenne != 0
+                      ? (moyenne > 0 ? theme.colorScheme.primary : theme.colorScheme.error)
+                      : null,
+                  compact: true,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Résultats du mode observation : ce que le système aurait fait.
 class _ShadowTab extends ConsumerWidget {
   const _ShadowTab();
@@ -221,8 +283,21 @@ class _ShadowTab extends ConsumerWidget {
         final Map<String, dynamic> overall = Map<String, dynamic>.from(
           (payload['overall'] as Map<dynamic, dynamic>?) ?? const <dynamic, dynamic>{},
         );
+        final Map<String, dynamic> marginal = Map<String, dynamic>.from(
+          ((payload['marginalBand'] as Map<dynamic, dynamic>?)?['overall']
+                  as Map<dynamic, dynamic>?) ??
+              const <dynamic, dynamic>{},
+        );
         final Object? simulated = overall['simulated'];
-        if (simulated is! num || simulated == 0) {
+        final Object? marginalSimulated = marginal['simulated'];
+        final bool observationVide = simulated is! num || simulated == 0;
+        final bool bandeVide = marginalSimulated is! num || marginalSimulated == 0;
+
+        // L'écran ne se déclare vide que si les DEUX mesures le sont. Le mode
+        // observation peut très bien n'avoir jamais tourné alors que la bande
+        // marginale se remplit : c'est même le cas normal, puisqu'elle
+        // s'enregistre pendant que le système trade.
+        if (observationVide && bandeVide) {
           return const EmptyState(
             title: 'Aucune simulation clôturée',
             message: 'Le mode observation enregistre ce que le système aurait fait, sans '
@@ -237,6 +312,7 @@ class _ShadowTab extends ConsumerWidget {
           child: ListView(
             padding: AppSpacing.page,
             children: <Widget>[
+              if (!bandeVide) _MarginalBandCard(overall: marginal),
               AppCard(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
