@@ -22,7 +22,7 @@ Un verrou par instrument empeche deux analyses simultanees du meme symbole
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -64,6 +64,9 @@ class AnalysisOutcome:
     risk_decision: risk.RiskDecision = field(default_factory=risk.RiskDecision)
     ai_reading: ai_module.AIReading = field(default_factory=ai_module.AIReading)
     signal: WatcherSignal | None = None
+    # Mesure en avant, deliberement separee de ``signal`` : tout ce qui lit
+    # ``signal`` parle de ce qui a ete publie et execute, et doit continuer.
+    shadow_signal: WatcherSignal | None = None
     publication: PublishResult | None = None
     execution: ExecutionReport | None = None
     detail: str = ""
@@ -87,6 +90,7 @@ class AnalysisOutcome:
             "scoreBreakdown": self.card.breakdown() if self.card else None,
             "ai": self.ai_reading.to_dict(),
             "signal": self.signal.to_dict() if self.signal else None,
+            "shadowSignal": self.shadow_signal.to_dict() if self.shadow_signal else None,
             "publication": self.publication.to_dict() if self.publication else None,
             "execution": self.execution.to_dict() if self.execution else None,
             "context": self.context.summary() if self.context else None,
@@ -191,8 +195,47 @@ class WatcherEngine:
                 session, context, card, config, moment, outcome.decision
             )
 
+        # Mesure en avant. Volontairement hors de la chaine ci-dessus : un
+        # fantome n'est ni publie ni execute, il n'a donc pas a concourir avec
+        # les branches qui le sont. Il ne nait que si le score etait le SEUL
+        # obstacle -- verifie en rejouant le meme jeu de garde-fous avec le
+        # plancher fantome a la place du seuil.
+        if not outcome.decision.is_tradable and levels is not None and card is not None:
+            outcome.shadow_signal = await self._create_shadow(
+                session, context, best_direction, levels, card, outcome, config, state, moment
+            )
+
         await self._record(session, outcome, context, moment)
         return outcome
+
+    async def _create_shadow(
+        self,
+        session: AsyncSession,
+        context: MarketContext,
+        direction: Direction,
+        levels: TradeLevels,
+        card: ScoreCard,
+        outcome: AnalysisOutcome,
+        config: WatcherConfig,
+        state: risk.PortfolioState,
+        now: datetime,
+    ) -> WatcherSignal | None:
+        """Cree le signal qu'un seuil plus bas aurait publie, s'il y en a un."""
+        if not config.shadow_enabled:
+            return None
+        if config.shadow_score >= config.minimum_score:
+            # Un plancher au-dessus du seuil ne mesurerait rien : la bande
+            # qu'il explore est vide par construction.
+            return None
+
+        abaisse = replace(config, minimum_score=config.shadow_score)
+        verdict = risk.evaluate(context, direction, levels, card, abaisse, state, now)
+        if not verdict.approved:
+            return None
+
+        return await self._create_signal(
+            session, context, direction, levels, card, outcome, config, now, shadow=True
+        )
 
     # ------------------------------------------------------------------
     # Choix du sens et de la decision
@@ -273,6 +316,7 @@ class WatcherEngine:
         outcome: AnalysisOutcome,
         config: WatcherConfig,
         now: datetime,
+        shadow: bool = False,
     ) -> WatcherSignal:
         """Enregistre le signal. Les niveaux sont ceux du calcul, pas ceux de l'IA."""
         reasons = [levels.entry_reason, levels.stop_reason, *levels.target_reasons]
@@ -316,6 +360,7 @@ class WatcherEngine:
             ai_comment=outcome.ai_reading.comment,
             ai_provider=outcome.ai_reading.provider,
             strategy_version=STRATEGY_VERSION,
+            shadow=shadow,
             created_at=now,
             expires_at=now + timedelta(minutes=max(1, config.signal_ttl_minutes)),
         )

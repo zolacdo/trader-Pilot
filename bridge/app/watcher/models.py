@@ -216,6 +216,13 @@ class WatcherSignal(SQLModel, table=True):
     booked_r: float = Field(default=0.0)
     open_fraction: float = Field(default=1.0)
 
+    # Mesure en avant : signal que le systeme aurait publie si le seuil avait
+    # ete plus bas. Suivi comme un vrai -- memes bougies, meme comptabilite --
+    # mais jamais publie, jamais execute, et INVISIBLE pour les decisions
+    # reelles : un fantome qui compterait dans l'anti-doublon etoufferait le
+    # vrai signal qu'il est cense aider a evaluer.
+    shadow: bool = Field(default=False, index=True)
+
     @property
     def is_open(self) -> bool:
         return self.status in OPEN_STATUSES

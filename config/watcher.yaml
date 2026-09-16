@@ -139,3 +139,21 @@ learning_window_days: 30
 learning_bounds:
   minimum_score: [65, 80]
   minimum_rr: [1.2, 2.5]
+
+# --- mesure en avant de la bande sous le seuil --------------------------------
+# Un « fantome » est le signal que le systeme aurait publie si minimum_score
+# avait valu shadow_score. Il est suivi comme un vrai -- memes bougies, meme
+# comptabilite en R -- mais il n'est JAMAIS publie, JAMAIS execute, et il reste
+# invisible pour les decisions reelles : il ne compte ni dans l'anti-doublon, ni
+# dans le plafond d'exposition, ni dans la cadence, ni dans l'apprentissage.
+#
+# Il ne nait que si le score etait le SEUL obstacle : les memes garde-fous sont
+# rejoues avec shadow_score a la place du seuil, et le verdict doit passer. Sans
+# cela on mesurerait des setups refuses pour d'autres raisons, et la bande
+# paraitrait pire qu'elle n'est.
+#
+# C'est le capteur qui rend une baisse de seuil justifiable au lieu d'un pari :
+# le 16/09/2026 le marche plafonnait a 66,7 pour un seuil a 70, et personne ne
+# savait ce que vaut la bande 65-70.
+shadow_enabled: true
+shadow_score: 65

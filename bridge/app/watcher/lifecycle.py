@@ -318,20 +318,27 @@ class LifecycleTracker:
             # autres signaux ne doit pas dependre de cette ecriture. Mais un
             # echec est journalise et non avale : une perte jamais analysee est
             # exactement ce qu'il faut voir.
-            try:
-                position = await repository.matching_trade(session, signal)
-                trace = await repository.record_post_mortem(session, signal, position)
-                lesson = trace.lesson if trace is not None else None
-            except Exception as exc:
-                logger.warning(
-                    "Post-mortem du signal %s impossible : %s", signal.id, exc
-                )
+            #
+            # Un fantome en est exclu : il mesure une bande, il n'est pas une
+            # operation dont on tire des lecons tant qu'on n'a pas decide
+            # d'ouvrir cette bande pour de vrai.
+            if not signal.shadow:
+                try:
+                    position = await repository.matching_trade(session, signal)
+                    trace = await repository.record_post_mortem(session, signal, position)
+                    lesson = trace.lesson if trace is not None else None
+                except Exception as exc:
+                    logger.warning(
+                        "Post-mortem du signal %s impossible : %s", signal.id, exc
+                    )
 
         if signal.id is not None:
             await repository.add_event(session, signal.id, status, price=price, detail=detail)
 
         update = SignalUpdate(signal=signal, status=status, price=price, detail=detail)
-        if config.send_signal_updates:
+        # Un fantome se denoue en silence : la bande mesuree n'a pas a encombrer
+        # le canal de signaux que personne n'a pris.
+        if config.send_signal_updates and not signal.shadow:
             text = formatter.lifecycle_message(signal, status, price, detail, lesson)
             result = await self._publisher.publish(session, text, config)
             update.published = result.sent

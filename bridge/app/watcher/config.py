@@ -142,6 +142,15 @@ class WatcherConfig:
 
     weights: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_WEIGHTS))
 
+    # --- mesure en avant de la bande sous le seuil ---
+    # Un fantome est un signal que le systeme aurait publie si le seuil avait
+    # ete plus bas. Il est suivi comme un vrai mais jamais publie, jamais
+    # execute, et invisible pour les decisions reelles. C'est le capteur qui
+    # rend une baisse de seuil justifiable au lieu d'etre un pari : sans lui,
+    # personne ne sait ce que vaut la bande qu'on s'apprete a ouvrir.
+    shadow_enabled: bool = True
+    shadow_score: float = 65.0
+
     # --- apprentissage sur les pertes (CDC3 section 41) ---
     # Il n'ecarte qu'une clef sans un seul gain, et n'ajuste jamais un
     # parametre dont la borne n'est pas ecrite ici : sans limite declaree,

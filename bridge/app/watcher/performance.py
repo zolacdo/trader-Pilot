@@ -265,12 +265,20 @@ def _recommendations(report: PerformanceReport) -> list[str]:
 
 
 async def compute(
-    session: AsyncSession, window_days: int = 30, now: datetime | None = None
+    session: AsyncSession,
+    window_days: int = 30,
+    now: datetime | None = None,
+    shadow: bool = False,
 ) -> PerformanceReport:
-    """Charge les signaux de la fenetre et en tire le bilan."""
+    """Charge les signaux de la fenetre et en tire le bilan.
+
+    ``shadow`` mesure la bande exploree sous le seuil au lieu de ce qui a
+    reellement ete joue. C'est ce bilan qui dit si le seuil merite d'etre
+    abaisse, et il ne doit jamais etre confondu avec l'autre.
+    """
     moment = now or utcnow()
     since = moment - timedelta(days=max(1, window_days))
-    signals = await repository.signals_since(session, since)
+    signals = await repository.signals_since(session, since, shadow=shadow)
     return build_report(signals, window_days)
 
 

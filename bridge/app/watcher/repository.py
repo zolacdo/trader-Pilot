@@ -95,9 +95,20 @@ async def list_signals(
     return list(result.all())
 
 
-async def signals_since(session: AsyncSession, since: datetime) -> list[WatcherSignal]:
-    """Tous les signaux crees depuis une date, clos ou non (statistiques)."""
-    statement = select(WatcherSignal).where(WatcherSignal.created_at >= since)
+async def signals_since(
+    session: AsyncSession, since: datetime, shadow: bool = False
+) -> list[WatcherSignal]:
+    """Tous les signaux crees depuis une date, clos ou non (statistiques).
+
+    ``shadow`` choisit la population. Les deux ne se melangent jamais dans un
+    meme bilan : une moyenne qui confond ce qui a ete joue et ce qui n'a ete
+    que mesure ne decrit ni l'un ni l'autre.
+    """
+    statement = (
+        select(WatcherSignal)
+        .where(WatcherSignal.created_at >= since)
+        .where(WatcherSignal.shadow.is_(shadow))  # type: ignore[union-attr]
+    )
     result = await session.exec(
         statement.order_by(WatcherSignal.created_at.asc())  # type: ignore[attr-defined]
     )
@@ -105,17 +116,26 @@ async def signals_since(session: AsyncSession, since: datetime) -> list[WatcherS
 
 
 async def count_signals_since(session: AsyncSession, since: datetime) -> int:
+    """Signaux reels depuis cette date. Les fantomes ne comptent pas."""
     result = await session.exec(
-        select(func.count()).select_from(WatcherSignal).where(WatcherSignal.created_at >= since)
+        select(func.count())
+        .select_from(WatcherSignal)
+        .where(WatcherSignal.created_at >= since)
+        .where(WatcherSignal.shadow.is_(False))  # type: ignore[union-attr]
     )
     return int(result.one() or 0)
 
 
 async def last_signal_at(session: AsyncSession, symbol: str) -> datetime | None:
-    """Date du dernier signal publie sur cet instrument, quel que soit son sens."""
+    """Date du dernier signal reel sur cet instrument, quel que soit son sens.
+
+    Elle sert a tenir la cadence : un fantome ne doit pas faire croire qu'un
+    signal vient de partir sur cet instrument.
+    """
     result = await session.exec(
         select(WatcherSignal.created_at)
         .where(WatcherSignal.symbol == symbol.strip().upper())
+        .where(WatcherSignal.shadow.is_(False))  # type: ignore[union-attr]
         .order_by(WatcherSignal.created_at.desc())  # type: ignore[attr-defined]
         .limit(1)
     )
@@ -132,7 +152,10 @@ async def portfolio_state(
     """Etat courant du watcher, tel que le Risk Manager en a besoin."""
     moment = now or utcnow()
     canonical = symbol.strip().upper()
-    opened = await open_signals(session)
+    # Les fantomes sont exclus de bout en bout : ils alimenteraient sinon
+    # l'anti-doublon et le plafond d'exposition, et une mesure etoufferait la
+    # decision qu'elle sert a eclairer.
+    opened = [item for item in await open_signals(session) if not item.shadow]
     same_symbol = [item for item in opened if item.symbol == canonical]
     return PortfolioState(
         active_signals=len(opened),
@@ -461,15 +484,21 @@ async def closed_signals(
     session: AsyncSession,
     since: datetime | None = None,
     strategy_version: str | None = None,
+    shadow: bool = False,
 ) -> list[WatcherSignal]:
     """Signaux reellement denoues : ceux qui portent un resultat.
 
     ``strategy_version`` restreint aux signaux mesures par la comptabilite
     courante. Deux versions ne comptent pas pareil : melanger leurs resultats
     donnerait une moyenne qui ne decrit aucune des deux.
+
+    ``shadow`` choisit la population : les vrais signaux par defaut, les
+    fantomes quand on veut mesurer la bande qu'ils explorent.
     """
-    statement = select(WatcherSignal).where(
-        WatcherSignal.result_r.is_not(None)  # type: ignore[union-attr]
+    statement = (
+        select(WatcherSignal)
+        .where(WatcherSignal.result_r.is_not(None))  # type: ignore[union-attr]
+        .where(WatcherSignal.shadow.is_(shadow))  # type: ignore[union-attr]
     )
     if since is not None:
         statement = statement.where(WatcherSignal.created_at >= since)
