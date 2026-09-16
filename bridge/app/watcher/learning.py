@@ -30,6 +30,22 @@ Trois regles dont ce module ne sort jamais :
 Une decision n'est qu'un reglage en base : elle se defait depuis
 l'application, sans toucher au code. Et ce module ne connait pas le moteur
 d'execution -- il ne peut pas passer d'ordre, c'est structurel.
+
+DIVERGENCE ASSUMEE avec ``app/services/learning/recorder.py``. Ce module-la
+porte une regle absolue heritee du CDC2 : « le systeme ne reecrit JAMAIS ses
+propres regles ; il produit des statistiques, un humain lit, decide et
+modifie la configuration ». Elle vaut toujours pour le moteur de decision.
+
+Elle ne vaut PLUS pour le watcher, sur demande explicite du 16/09/2026 : « je
+veux que tout fonctionne comme un trader pro qui prend les decisions sans ma
+presence [...] il peut ajuster ses poids seul ». Les deux sous-systemes
+suivent donc des philosophies opposees, ce qui est voulu et non une
+incoherence a « corriger » en alignant l'un sur l'autre.
+
+Ce qui rend la difference tenable ici, et qui manquerait a une reecriture
+libre : les bornes declarees, le pas unitaire, les bandes mortes, l'exigence
+de preuve neuve, et le fait qu'aucune ecriture ne touche au code -- seulement
+des reglages que l'utilisateur peut defaire d'un geste.
 """
 
 from __future__ import annotations

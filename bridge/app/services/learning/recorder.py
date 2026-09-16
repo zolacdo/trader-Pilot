@@ -4,9 +4,16 @@ Apres chaque trade, le systeme enregistre le contexte complet : origine de la
 decision, scores, strategie, niveaux, risque, resultat, MFE, MAE, duree,
 regime, session, modeles IA utilises et consensus obtenu.
 
-REGLE ABSOLUE : le systeme ne reecrit JAMAIS ses propres regles. Il produit
-des statistiques ; un humain lit, decide et modifie la configuration. Aucune
-fonction de ce module ne modifie un parametre de trading.
+SEPARATION DES ROLES : aucune fonction de ce module ne modifie un parametre de
+trading. Il mesure et il presente, c'est tout -- melanger la mesure et la
+commande rendrait les deux impossibles a relire.
+
+La regle qui figurait ici -- « le systeme ne reecrit JAMAIS ses propres
+regles ; un humain lit, decide et modifie la configuration » -- a ete levee le
+16/09/2026 sur demande explicite : « il doit le changer, pas besoin de la
+presence d'un humain ». C'est desormais ``tuner.py`` qui transforme ces
+mesures en reglages, avec ses propres garde-fous : reference plancher, pas
+unitaire, plafond, bande morte et exigence d'une preuve neuve.
 """
 
 from __future__ import annotations
@@ -37,8 +44,10 @@ LEARNING_EVENT = "trade_outcome"
 UNSPECIFIED_STRATEGY = "NON_SPECIFIEE"
 
 LEARNING_NOTE = (
-    "Statistiques d'apprentissage : le système mesure et présente, il ne modifie "
-    "jamais ses propres règles. Toute évolution de configuration reste une décision humaine."
+    "Statistiques d'apprentissage : le système mesure, présente, et ajuste seul son "
+    "exigence d'entrée dans les limites déclarées — pas unitaire, plafond, et jamais "
+    "sous la référence que vous avez posée. Chaque ajustement est journalisé et "
+    "reste défaisable depuis l'application."
 )
 
 WIN = "WIN"

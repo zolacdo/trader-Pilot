@@ -32,6 +32,7 @@ from app.services.intelligence.cycle import (
     notify_upcoming_events,
     run_cycle,
 )
+from app.services.learning import tuner
 
 logger = get_logger(__name__)
 
@@ -341,6 +342,12 @@ class IntelligenceScheduler:
                         efface,
                         heures,
                     )
+                # Le regleur transforme les mesures d'apprentissage en
+                # exigence d'entree. Il ne bouge que paye d'une preuve neuve,
+                # donc passer ici toutes les dix minutes ne le fait pas
+                # deriver : il est muet la plupart du temps.
+                async with session_scope() as session:
+                    await tuner.tune(session)
             except Exception as exc:
                 # L'entretien ne doit jamais emporter les autres boucles.
                 logger.warning("Entretien des notifications impossible : %s", exc)
