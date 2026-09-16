@@ -113,6 +113,10 @@ abstract final class Endpoints {
   // --- statistiques et journal ---
   static const String statistics = '$base/statistics';
   static const String statisticsToday = '$base/statistics/today';
+
+  // AI Market Watcher : le bilan renvoie les deux bandes, publiée et mesurée.
+  static const String watcherPerformance = '$base/watcher/performance';
+  static const String watcherSettings = '$base/watcher/settings';
   static const String journal = '$base/journal';
   static const String journalAudit = '$base/journal/audit';
 

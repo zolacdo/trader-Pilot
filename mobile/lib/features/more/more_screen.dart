@@ -34,6 +34,8 @@ class MoreScreen extends ConsumerWidget {
         'Pourquoi le système a agi — et surtout pourquoi il s\'est abstenu.'),
     _MoreEntry(Routes.statistics, Icons.insights_outlined, 'Statistiques',
         'Résultats, taux de réussite et ventilation par canal.'),
+    _MoreEntry(Routes.watcherBand, Icons.compare_arrows_outlined, 'Bande mesurée',
+        'Ce que le seuil publie, contre ce qu\'il écarte et suit quand même.'),
     _MoreEntry(Routes.ai, Icons.image_search_outlined, 'Analyse d\'une capture',
         'Lecture informative d\'une capture de graphique. Aucun ordre envoyé.'),
     _MoreEntry(Routes.aiConfig, Icons.psychology_outlined, 'Moteurs d\'IA',

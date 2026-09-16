@@ -35,6 +35,7 @@ import '../../features/settings/symbol_mapping_screen.dart';
 import '../../features/signals/signal_detail_screen.dart';
 import '../../features/signals/signals_screen.dart';
 import '../../features/statistics/statistics_screen.dart';
+import '../../features/watcher/watcher_screen.dart';
 import '../connection/connection_controller.dart';
 
 /// Chemins de navigation, centralises pour eviter les chaines magiques.
@@ -54,6 +55,7 @@ abstract final class Routes {
   static const String emergency = '/emergency';
 
   static const String statistics = '/more/statistics';
+  static const String watcherBand = '/more/watcher-band';
   static const String ai = '/more/ai';
   static const String journal = '/more/journal';
   static const String risk = '/more/risk';
@@ -195,6 +197,12 @@ final Provider<GoRouter> appRouterProvider = Provider<GoRouter>((ref) {
                 path: 'statistics',
                 parentNavigatorKey: _rootNavigatorKey,
                 builder: (BuildContext context, GoRouterState state) => const StatisticsScreen(),
+              ),
+              GoRoute(
+                path: 'watcher-band',
+                parentNavigatorKey: _rootNavigatorKey,
+                builder: (BuildContext context, GoRouterState state) =>
+                    const WatcherBandScreen(),
               ),
               GoRoute(
                 path: 'ai',
