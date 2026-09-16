@@ -167,9 +167,17 @@ class Recorder:
 
 class TestChaineComplete:
     async def test_un_signal_publie_part_aussi_vers_le_moteur(
-        self, session: AsyncSession, espion: MoteurEspion
+        self, session: AsyncSession, espion: MoteurEspion, geometrie_permissive: None
     ) -> None:
-        """C’est le raccourci qui manquait : publier ET transmettre."""
+        """C’est le raccourci qui manquait : publier ET transmettre.
+
+        La garde geometrique est desserree parce que ce test mesure la CHAINE,
+        pas la forme des niveaux. Les bougies du simulateur ne dependent que du
+        symbole et de l'horodatage ABSOLU : selon l'heure a laquelle la suite
+        tourne, le stop calcule tenait dans 4 ATR ou non, et le test passait le
+        matin pour echouer l'apres-midi. Constate le 16/09/2026 : « Stop trop
+        large (5.4 ATR) » sur un scenario inchange depuis des jours.
+        """
         from app.services.market_data.engine import MarketDataEngine
         from app.services.mt5.fake_service import FakeMetaTraderService
         from app.watcher.engine import WatcherEngine

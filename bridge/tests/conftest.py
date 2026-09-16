@@ -130,6 +130,27 @@ async def client(paper: PaperTradingService) -> AsyncIterator[AsyncClient]:
 
 
 @pytest.fixture
+def geometrie_permissive(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Desserre la garde de largeur de stop du watcher, pour les tests de chaine.
+
+    Les bougies du simulateur ne dependent que du symbole et de l'horodatage
+    ABSOLU (voir ``_fake_engine.generate_candles``). Selon l'heure a laquelle
+    la suite tourne, le stop calcule tient dans ``MAX_STOP_ATR`` ou non : tout
+    test qui a besoin qu'un signal EXISTE devient donc vert le matin et rouge
+    l'apres-midi, sans qu'une ligne de code ait bouge.
+
+    Constate le 16/09/2026 vers 09h UTC : « Stop trop large (5.4 ATR) » a fait
+    tomber sept tests d'un coup, sur des scenarios inchanges depuis des jours.
+
+    A ne PAS utiliser pour eprouver la garde elle-meme : elle a sa propre
+    raison d'etre, et ce desserrage la rendrait muette.
+    """
+    from app.watcher import levels
+
+    monkeypatch.setattr(levels, "MAX_STOP_ATR", 100.0)
+
+
+@pytest.fixture
 async def auth_client(client: AsyncClient) -> AsyncIterator[AsyncClient]:
     """Client deja appaire : l'en-tete Authorization porte un jeton valide."""
     status = await client.get("/api/v1/pairing/status")

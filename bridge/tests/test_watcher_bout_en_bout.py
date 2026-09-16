@@ -110,7 +110,15 @@ class TestAnalyseComplete:
         watcher: WatcherEngine,
         config: WatcherConfig,
         recorder: Recorder,
+        geometrie_permissive: None,
     ) -> None:
+        """La garde geometrique est desserree : ce test mesure la publication.
+
+        Les bougies du simulateur ne dependent que du symbole et de
+        l'horodatage ABSOLU. Selon l'heure a laquelle la suite tourne, le stop
+        calcule tient dans 4 ATR ou non -- et un test qui rougit selon
+        l'horloge ne prouve rien le reste du temps.
+        """
         config.minimum_score = 1.0
         config.minimum_rr = 0.1
         outcome = await watcher.analyse(session, market, SYMBOL, SYMBOL, config)
@@ -121,7 +129,12 @@ class TestAnalyseComplete:
         assert SYMBOL in recorder.messages[0]
 
     async def test_le_signal_enregistre_porte_sa_version_de_strategie(
-        self, session, market: MarketDataEngine, watcher: WatcherEngine, config: WatcherConfig
+        self,
+        session,
+        market: MarketDataEngine,
+        watcher: WatcherEngine,
+        config: WatcherConfig,
+        geometrie_permissive: None,
     ) -> None:
         config.minimum_score = 1.0
         config.minimum_rr = 0.1
@@ -132,7 +145,12 @@ class TestAnalyseComplete:
         assert outcome.signal.expires_at is not None
 
     async def test_les_niveaux_sont_coherents_avec_le_sens(
-        self, session, market: MarketDataEngine, watcher: WatcherEngine, config: WatcherConfig
+        self,
+        session,
+        market: MarketDataEngine,
+        watcher: WatcherEngine,
+        config: WatcherConfig,
+        geometrie_permissive: None,
     ) -> None:
         config.minimum_score = 1.0
         config.minimum_rr = 0.1
@@ -151,6 +169,7 @@ class TestAnalyseComplete:
         watcher: WatcherEngine,
         config: WatcherConfig,
         recorder: Recorder,
+        geometrie_permissive: None,
     ) -> None:
         config.minimum_score = 1.0
         config.minimum_rr = 0.1
@@ -167,6 +186,7 @@ class TestAnalyseComplete:
         watcher: WatcherEngine,
         config: WatcherConfig,
         recorder: Recorder,
+        geometrie_permissive: None,
     ) -> None:
         """Le second tour ne doit pas republier le meme signal (CDC3 section 31)."""
         config.minimum_score = 1.0

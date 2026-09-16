@@ -170,7 +170,11 @@ async def test_un_fantome_se_denoue_en_silence(session) -> None:
 # Creation par le moteur
 # ---------------------------------------------------------------------------
 async def test_un_fantome_nait_quand_seul_le_score_manquait(
-    session, market: MarketDataEngine, watcher: WatcherEngine, config: WatcherConfig
+    session,
+    market: MarketDataEngine,
+    watcher: WatcherEngine,
+    config: WatcherConfig,
+    geometrie_permissive: None,
 ) -> None:
     outcome = await watcher.analyse(session, market, SYMBOL, SYMBOL, config)
 
@@ -187,6 +191,7 @@ async def test_un_fantome_n_est_ni_publie_ni_execute(
     watcher: WatcherEngine,
     config: WatcherConfig,
     recorder: Recorder,
+    geometrie_permissive: None,
 ) -> None:
     """Il mesure, il ne parle pas et il ne touche pas au compte."""
     outcome = await watcher.analyse(session, market, SYMBOL, SYMBOL, config)
@@ -199,7 +204,11 @@ async def test_un_fantome_n_est_ni_publie_ni_execute(
 
 
 async def test_un_seul_fantome_a_la_fois_par_sens(
-    session, market: MarketDataEngine, watcher: WatcherEngine, config: WatcherConfig
+    session,
+    market: MarketDataEngine,
+    watcher: WatcherEngine,
+    config: WatcherConfig,
+    geometrie_permissive: None,
 ) -> None:
     """Les fantomes ont leur propre anti-doublon, sinon ils inondent la table.
 

@@ -29,11 +29,13 @@ from app.models.enums import (
     RejectionReason,
     SignalStatus,
 )
+from app.models.intelligence import DecisionSource
 from app.models.telegram import Channel
 from app.models.trading import Signal
 from app.repositories import channel_repo, settings_repo, signal_repo, trade_repo
 from app.services import journal
 from app.services.events import EventType, event_bus
+from app.services.learning import recorder
 from app.services.mt5.interface import MetaTraderService
 from app.services.risk.calculator import loss_for_one_lot
 from app.services.risk.manager import RiskContext, RiskDecision, RiskManager
@@ -72,6 +74,47 @@ class ProcessOutcome:
             "execution": self.execution.to_dict() if self.execution else None,
             **self.extra,
         }
+
+
+def _learning_record(trade: Any, result: float) -> recorder.TradeLearningRecord:
+    """Contexte d'apprentissage d'un trade clos, sans rien inventer.
+
+    Les champs que la position ne porte pas restent vides : le recorder
+    distingue « absent » de « zero », et une valeur devinee vaudrait moins
+    qu'un trou. La strategie n'est pas nommee parce que rien ne la nomme sur
+    une position -- il faudrait que le chemin de decision la transmette.
+
+    L'origine, elle, se deduit honnetement : un trade rattache a un signal
+    vient d'un canal Telegram, sinon du cycle autonome. C'est exactement la
+    comparaison que le ``by_source`` du CDC2 sert a rendre.
+    """
+    ouverture = as_utc(trade.opened_at)
+    cloture = as_utc(trade.closed_at)
+    duree: float | None = None
+    if ouverture is not None and cloture is not None:
+        duree = round((cloture - ouverture).total_seconds() / 60.0, 2)
+
+    return recorder.TradeLearningRecord(
+        symbol=trade.symbol,
+        direction=trade.direction,
+        source=(
+            DecisionSource.TELEGRAM
+            if trade.signal_id is not None
+            else DecisionSource.AI_GENERATED
+        ),
+        entry_price=trade.open_price or None,
+        stop_loss=trade.initial_stop_loss or trade.stop_loss,
+        take_profit=trade.take_profit,
+        take_profits=list(trade.take_profit_targets or []),
+        volume=trade.initial_volume or None,
+        realized_pnl=result,
+        r_multiple=trade.r_multiple,
+        duration_minutes=duree,
+        trade_id=trade.id,
+        signal_id=trade.signal_id,
+        opened_at=ouverture,
+        closed_at=cloture,
+    )
 
 
 class TradingEngine:
@@ -932,18 +975,37 @@ class TradingEngine:
                 state.consecutive_losses += 1
             elif result > 0:
                 state.consecutive_losses = 0
-            if service is None:
-                continue
+            if service is not None:
+                try:
+                    reference = await self.risk_reference(service, trade)
+                except Exception as exc:  # le terminal peut refuser le symbole
+                    logger.debug(
+                        "Risque de reference indisponible pour %s : %s", trade.symbol, exc
+                    )
+                    reference = None
+                # Sans reference fiable on laisse le champ vide : un R invente
+                # pollue les statistiques par canal plus surement qu'un trou.
+                if reference:
+                    trade.r_multiple = round(result / reference, 3)
+                    await trade_repo.save_trade(session, trade)
+
+            # C'est ici, et nulle part ailleurs, que la memoire d'apprentissage
+            # est alimentee. Elle ne l'etait par PERSONNE : le sous-systeme du
+            # CDC2 existait en entier mais ``strategy_performance`` restait
+            # vide, donc les statistiques d'apprentissage ne disaient rien et
+            # le regleur autonome mesurait une table sans lignes.
+            #
+            # Non bloquant : la comptabilite du jour ne doit pas dependre
+            # d'elle, sinon une panne de la memoire empecherait une perte
+            # d'etre comptee et un garde-fou journalier de se declencher.
             try:
-                reference = await self.risk_reference(service, trade)
-            except Exception as exc:  # le terminal peut refuser le symbole
-                logger.debug("Risque de reference indisponible pour %s : %s", trade.symbol, exc)
-                reference = None
-            # Sans reference fiable on laisse le champ vide : un R invente
-            # pollue les statistiques par canal plus surement qu'un trou.
-            if reference:
-                trade.r_multiple = round(result / reference, 3)
-                await trade_repo.save_trade(session, trade)
+                await recorder.record_trade_outcome(session, _learning_record(trade, result))
+            except Exception as exc:
+                logger.warning(
+                    "Memoire d'apprentissage non alimentee pour le ticket %s : %s",
+                    trade.ticket,
+                    exc,
+                )
         await settings_repo.save_trading_state(session, state)
 
         if (
