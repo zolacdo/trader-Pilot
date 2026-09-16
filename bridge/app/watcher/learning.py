@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.logging_config import get_logger
 from app.models.core import as_utc, utcnow
 from app.services import journal
-from app.watcher import repository
+from app.watcher import performance, repository
 from app.watcher.config import WatcherConfig, update_config
 from app.watcher.models import STRATEGY_VERSION
 from app.watcher.performance import MIN_SAMPLE
@@ -42,8 +42,17 @@ class Decision:
 
     key: str
     kind: str
-    losses: int
+    # Nombre d'operations denouees qui portent la decision. C'est la seule
+    # grandeur qui la rend contestable : sans elle, « ecarte » ou « abaisse »
+    # n'est qu'une affirmation.
+    sample: int
     message: str
+
+
+# Un point par decision, pas un bond. Le seuil met donc cinq heures a
+# descendre de 70 a 65, chaque pas etant re-mesure : une commande qui saute
+# d'un coup ne laisse jamais voir l'effet du pas precedent.
+THRESHOLD_STEP = 1.0
 
 
 def clamp(config: WatcherConfig, name: str, value: float) -> float | None:
@@ -99,9 +108,6 @@ async def review(session: AsyncSession, config: WatcherConfig) -> list[Decision]
         for decision in _sterile(closed, traces, "symbol", gagnants)
         if decision.key in surveilles
     ]
-    if not decisions:
-        return []
-
     changes: dict[str, Any] = {}
     types = [decision.key for decision in decisions if decision.kind == "entry_type"]
     if types:
@@ -111,7 +117,14 @@ async def review(session: AsyncSession, config: WatcherConfig) -> list[Decision]
         changes["symbols"] = [
             item for item in config.symbols if str(item).upper() not in set(symbols)
         ]
-    await update_config(session, changes)
+    if changes:
+        await update_config(session, changes)
+
+    # Le seuil se regle a part : il ne depend pas de ce qui precede, et les
+    # deux ecritures ne touchent pas les memes clefs.
+    seuil = await _adjust_threshold(session, config)
+    if seuil is not None:
+        decisions.append(seuil)
 
     for decision in decisions:
         logger.info("Apprentissage : %s", decision.message)
@@ -121,6 +134,76 @@ async def review(session: AsyncSession, config: WatcherConfig) -> list[Decision]
             category="system",
         )
     return decisions
+
+
+async def _adjust_threshold(
+    session: AsyncSession, config: WatcherConfig
+) -> Decision | None:
+    """Regle le seuil de publication d'apres ce que chaque bande rapporte.
+
+    Deux mesures, deux sens. La bande fantome -- ce que le systeme aurait
+    publie si le seuil avait ete plus bas -- justifie une baisse quand elle
+    gagne. Ce qui a reellement ete publie justifie une hausse quand il perd.
+    Aucune des deux ne parle sous ``MIN_SAMPLE`` operations, et les deux se
+    limitent a la version de strategie courante : un resultat mesure « sur
+    position entiere » ne decrit pas la meme chose et ferait bouger le seuil
+    sur du faux.
+
+    Une limite assumee : ces moyennes sont en R suivis, et le suivi ne
+    modelise pas le trailing. Elles sont donc un plancher du resultat reel.
+    L'effet est negligeable sur les perdants -- un trade arrete au break even
+    vaut ce qu'il dit -- mais un gagnant longuement suivi est sous-estime.
+    La hausse de seuil est donc legerement trop prompte, jamais l'inverse.
+    """
+    reel = await performance.compute(
+        session,
+        config.learning_window_days,
+        shadow=False,
+        strategy_version=STRATEGY_VERSION,
+    )
+    fantome = await performance.compute(
+        session,
+        config.learning_window_days,
+        shadow=True,
+        strategy_version=STRATEGY_VERSION,
+    )
+
+    baisser = fantome.overall.significant and (fantome.overall.average_r or 0.0) > 0
+    monter = reel.overall.significant and (reel.overall.average_r or 0.0) < 0
+
+    if baisser and monter:
+        # Monter abandonnerait une bande rentable ; baisser ajouterait du
+        # volume a des signaux qui perdent. Ni l'un ni l'autre n'est
+        # defendable, et choisir au hasard serait pire que s'abstenir.
+        logger.info(
+            "Seuil inchange : la bande mesuree gagne (%s R) alors que le publie "
+            "perd (%s R). Aucun des deux sens n'est defendable.",
+            fantome.overall.average_r,
+            reel.overall.average_r,
+        )
+        return None
+    if not baisser and not monter:
+        return None
+
+    bande = fantome.overall if baisser else reel.overall
+    cible = config.minimum_score + (-THRESHOLD_STEP if baisser else THRESHOLD_STEP)
+    valeur = clamp(config, "minimum_score", cible)
+    if valeur is None or abs(valeur - config.minimum_score) < 0.01:
+        # Borne absente, ou seuil deja contre sa borne : rien a ecrire.
+        return None
+
+    await update_config(session, {"minimum_score": valeur})
+    return Decision(
+        key="minimum_score",
+        kind="threshold",
+        sample=bande.trades,
+        message=(
+            f"Seuil de publication {'abaisse' if baisser else 'releve'} de "
+            f"{config.minimum_score:.0f} a {valeur:.0f} : {bande.trades} operation(s) "
+            f"a {bande.average_r:+.2f} R de moyenne sur la bande "
+            f"{'mesuree sous le seuil' if baisser else 'publiee'}."
+        ),
+    )
 
 
 def _a_gagne(signal: Any, trades: list[Any]) -> bool:
@@ -178,7 +261,7 @@ def _sterile(
             Decision(
                 key=key,
                 kind=kind,
-                losses=pertes.get(key, compte),
+                sample=pertes.get(key, compte),
                 message=(
                     f"{libelle} {key} ecarte : {compte} operation(s) denouee(s) "
                     f"sans un seul gain."

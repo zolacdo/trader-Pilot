@@ -269,6 +269,7 @@ async def compute(
     window_days: int = 30,
     now: datetime | None = None,
     shadow: bool = False,
+    strategy_version: str | None = None,
 ) -> PerformanceReport:
     """Charge les signaux de la fenetre et en tire le bilan.
 
@@ -278,7 +279,9 @@ async def compute(
     """
     moment = now or utcnow()
     since = moment - timedelta(days=max(1, window_days))
-    signals = await repository.signals_since(session, since, shadow=shadow)
+    signals = await repository.signals_since(
+        session, since, shadow=shadow, strategy_version=strategy_version
+    )
     return build_report(signals, window_days)
 
 

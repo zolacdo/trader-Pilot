@@ -96,19 +96,27 @@ async def list_signals(
 
 
 async def signals_since(
-    session: AsyncSession, since: datetime, shadow: bool = False
+    session: AsyncSession,
+    since: datetime,
+    shadow: bool = False,
+    strategy_version: str | None = None,
 ) -> list[WatcherSignal]:
     """Tous les signaux crees depuis une date, clos ou non (statistiques).
 
     ``shadow`` choisit la population. Les deux ne se melangent jamais dans un
     meme bilan : une moyenne qui confond ce qui a ete joue et ce qui n'a ete
     que mesure ne decrit ni l'un ni l'autre.
+
+    ``strategy_version`` restreint aux signaux mesures par la comptabilite
+    courante, pour les memes raisons que ``closed_signals``.
     """
     statement = (
         select(WatcherSignal)
         .where(WatcherSignal.created_at >= since)
         .where(WatcherSignal.shadow.is_(shadow))  # type: ignore[union-attr]
     )
+    if strategy_version is not None:
+        statement = statement.where(WatcherSignal.strategy_version == strategy_version)
     result = await session.exec(
         statement.order_by(WatcherSignal.created_at.asc())  # type: ignore[attr-defined]
     )

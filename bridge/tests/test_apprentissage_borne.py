@@ -17,6 +17,16 @@ from app.watcher.models import STRATEGY_VERSION, EntryType, WatcherStatus
 from tests.test_gestion_suivie_comme_executee import make_signal
 
 
+def _bannissements(decisions: list) -> list:
+    """Seules les mises au ban. Le reglage du seuil se teste ailleurs.
+
+    Ces tests fabriquent des operations perdantes, ce qui fait legitimement
+    monter le seuil de publication : sans ce filtre, ils mesureraient deux
+    regles a la fois et casseraient des que l'une des deux evolue.
+    """
+    return [item for item in decisions if item.kind in ("entry_type", "symbol")]
+
+
 async def _denoue(
     session,
     symbol: str,
@@ -51,18 +61,18 @@ async def test_sous_le_minimum_rien_n_est_decide(session) -> None:
     for _ in range(9):
         await _denoue(session, "BREAKUSD", EntryType.BREAKOUT)
 
-    assert await learning.review(session, WatcherConfig()) == []
+    assert _bannissements(await learning.review(session, WatcherConfig())) == []
 
 
 async def test_dix_pertes_sans_un_gain_ecartent_le_type_d_entree(session) -> None:
     for _ in range(10):
         await _denoue(session, "BREAKUSD", EntryType.BREAKOUT)
 
-    decisions = await learning.review(session, WatcherConfig())
+    decisions = _bannissements(await learning.review(session, WatcherConfig()))
 
     assert [decision.key for decision in decisions] == ["BREAKOUT"]
     assert decisions[0].kind == "entry_type"
-    assert decisions[0].losses == 10
+    assert decisions[0].sample == 10
     config = await load_config(session, refresh=True)
     assert "BREAKOUT" in config.disabled_entry_types
 
@@ -73,7 +83,7 @@ async def test_un_instrument_surveille_sort_de_la_liste(session) -> None:
         entree = EntryType.MARKET if index % 2 else EntryType.STOP
         await _denoue(session, "BTCUSD", entree)
 
-    decisions = await learning.review(session, WatcherConfig())
+    decisions = _bannissements(await learning.review(session, WatcherConfig()))
 
     assert [decision.key for decision in decisions] == ["BTCUSD"]
     assert decisions[0].kind == "symbol"
@@ -88,7 +98,7 @@ async def test_un_instrument_non_surveille_ne_produit_aucune_decision(session) -
         entree = EntryType.MARKET if index % 2 else EntryType.STOP
         await _denoue(session, "AUTREUSD", entree)
 
-    assert await learning.review(session, WatcherConfig()) == []
+    assert _bannissements(await learning.review(session, WatcherConfig())) == []
 
 
 async def test_les_signaux_d_une_version_precedente_sont_ignores(session) -> None:
@@ -105,7 +115,7 @@ async def test_les_signaux_d_une_version_precedente_sont_ignores(session) -> Non
             session, "BREAKUSD", EntryType.BREAKOUT, version="market_watcher_v1.0"
         )
 
-    assert await learning.review(session, WatcherConfig()) == []
+    assert _bannissements(await learning.review(session, WatcherConfig())) == []
 
 
 async def test_une_position_reelle_gagnante_empeche_le_bannissement(session) -> None:
@@ -136,7 +146,7 @@ async def test_une_position_reelle_gagnante_empeche_le_bannissement(session) -> 
             )
             await session.flush()
 
-    assert await learning.review(session, WatcherConfig()) == []
+    assert _bannissements(await learning.review(session, WatcherConfig())) == []
 
 
 async def test_un_seul_gain_suffit_a_ne_rien_ecarter(session) -> None:
@@ -145,7 +155,7 @@ async def test_un_seul_gain_suffit_a_ne_rien_ecarter(session) -> None:
         await _denoue(session, "BREAKUSD", EntryType.BREAKOUT)
     await _denoue(session, "BREAKUSD", EntryType.BREAKOUT, result_r=3.0)
 
-    assert await learning.review(session, WatcherConfig()) == []
+    assert _bannissements(await learning.review(session, WatcherConfig())) == []
 
 
 async def test_apprentissage_coupe_ne_decide_rien(session) -> None:
@@ -154,7 +164,7 @@ async def test_apprentissage_coupe_ne_decide_rien(session) -> None:
     config = WatcherConfig()
     config.learning_enabled = False
 
-    assert await learning.review(session, config) == []
+    assert _bannissements(await learning.review(session, config)) == []
 
 
 def test_un_parametre_sans_borne_declaree_n_est_pas_ecrit() -> None:
