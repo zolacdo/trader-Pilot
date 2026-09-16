@@ -170,6 +170,12 @@ class WatcherConfig:
     # un seul critere de decider a la place des dix.
     weight_floor: float = 2.0
     weight_ceiling: float = 30.0
+    # Taille de l'echantillon au dernier ajustement. Un pas n'est autorise que
+    # si la mesure a grossi depuis : sans cela, dix operations rentables
+    # feraient descendre le seuil d'un point TOUTES LES HEURES jusqu'a la
+    # borne, soit cinq pas payes d'une seule et meme mesure.
+    threshold_last_sample: int = 0
+    weights_last_sample: int = 0
 
     @property
     def simple_format(self) -> bool:

@@ -18,6 +18,11 @@ Trois regles dont ce module ne sort jamais :
    ``weight_floor`` / ``weight_ceiling`` ;
 3. aucune decision silencieuse. Chaque ecriture est journalisee avec son
    chiffrage, et l'ordonnanceur la publie dans le canal ;
+3bis. aucun pas sans preuve franche ni preuve neuve. Une bande morte
+   (``MIN_EDGE``, ``MIN_DISCRIMINATION``) evite le broutage d'un regulateur
+   qui oscille autour de zero, et un pas n'est autorise que si l'echantillon
+   a grossi depuis le precedent -- sinon la meme mesure ferait marcher le
+   reglage jusqu'a sa borne, heure apres heure ;
 4. aucun bannissement sur la foi du seul suivi. Le suivi ne modelise pas le
    trailing : son resultat est un plancher du resultat reel. Quand une
    position existe dans ``trades``, c'est elle qui dit si le signal a gagne.
@@ -66,6 +71,15 @@ THRESHOLD_STEP = 1.0
 # Meme prudence pour les poids, avec en plus une contrainte de somme : le
 # point retire a un critere est donne a un autre, jamais cree.
 WEIGHT_STEP = 1.0
+
+# Bandes mortes. Une esperance qui oscille autour de zero ferait descendre
+# puis remonter le seuil a chaque heure, indefiniment : il faut un ecart franc
+# pour agir. 0,10 R sur dix operations fait 1 R cumule -- mince, mais c'est un
+# signe ; en dessous, c'est du bruit centre.
+MIN_EDGE = 0.10
+# Meme raison pour les poids : deux centiemes d'ecart de ratio moyen entre
+# gagnants et perdants ne designent pas un critere trompeur.
+MIN_DISCRIMINATION = 0.10
 
 
 def clamp(config: WatcherConfig, name: str, value: float) -> float | None:
@@ -216,9 +230,18 @@ async def _adjust_weights(
         return None
     fiable = max(pouvoir, key=lambda key: pouvoir[key])
     trompeur = min(pouvoir, key=lambda key: pouvoir[key])
-    if fiable == trompeur or pouvoir[trompeur] >= 0 or pouvoir[fiable] <= 0:
+    if (
+        fiable == trompeur
+        or pouvoir[trompeur] > -MIN_DISCRIMINATION
+        or pouvoir[fiable] < MIN_DISCRIMINATION
+    ):
         # Sans critere franchement trompeur ET franchement fiable, il n'y a
         # rien a reprendre a personne.
+        return None
+
+    echantillon = len(gagnants) + len(perdants)
+    if echantillon <= config.weights_last_sample:
+        # Meme exigence que pour le seuil : un pas, un denouement neuf.
         return None
 
     poids = {key: config.weight(key) for key in DEFAULT_WEIGHTS}
@@ -228,12 +251,14 @@ async def _adjust_weights(
         return None
     poids[trompeur] -= WEIGHT_STEP
     poids[fiable] += WEIGHT_STEP
-    await update_config(session, {"weights": poids})
+    await update_config(
+        session, {"weights": poids, "weights_last_sample": echantillon}
+    )
 
     return Decision(
         key=f"{trompeur} -> {fiable}",
         kind="weight",
-        sample=len(gagnants) + len(perdants),
+        sample=echantillon,
         message=(
             f"Poids deplace de {trompeur} vers {fiable} : sur {len(gagnants)} gain(s) "
             f"et {len(perdants)} perte(s), {trompeur} etait plus haut dans les pertes "
@@ -275,8 +300,8 @@ async def _adjust_threshold(
         strategy_version=STRATEGY_VERSION,
     )
 
-    baisser = fantome.overall.significant and (fantome.overall.average_r or 0.0) > 0
-    monter = reel.overall.significant and (reel.overall.average_r or 0.0) < 0
+    baisser = fantome.overall.significant and (fantome.overall.average_r or 0.0) > MIN_EDGE
+    monter = reel.overall.significant and (reel.overall.average_r or 0.0) < -MIN_EDGE
 
     if baisser and monter:
         # Monter abandonnerait une bande rentable ; baisser ajouterait du
@@ -293,13 +318,20 @@ async def _adjust_threshold(
         return None
 
     bande = fantome.overall if baisser else reel.overall
+    if bande.trades <= config.threshold_last_sample:
+        # Un pas doit etre paye d'un denouement neuf. Sinon la meme mesure
+        # ferait marcher le seuil jusqu'a sa borne, heure apres heure.
+        return None
+
     cible = config.minimum_score + (-THRESHOLD_STEP if baisser else THRESHOLD_STEP)
     valeur = clamp(config, "minimum_score", cible)
     if valeur is None or abs(valeur - config.minimum_score) < 0.01:
         # Borne absente, ou seuil deja contre sa borne : rien a ecrire.
         return None
 
-    await update_config(session, {"minimum_score": valeur})
+    await update_config(
+        session, {"minimum_score": valeur, "threshold_last_sample": bande.trades}
+    )
     return Decision(
         key="minimum_score",
         kind="threshold",

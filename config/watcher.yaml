@@ -131,7 +131,13 @@ weights:
 #     du bruit ;
 #   - un parametre absent de learning_bounds ne peut PAS etre ajuste. La borne
 #     manquante vaut interdiction, jamais permission ;
-#   - chaque decision est journalisee et publiee dans le canal.
+#   - chaque decision est journalisee et publiee dans le canal ;
+#   - un pas exige une preuve FRANCHE et NEUVE. Il faut au moins 0,10 R
+#     d'esperance (ou 0,10 d'ecart de ratio pour un poids) : sans cette bande
+#     morte, une esperance qui oscille autour de zero ferait descendre puis
+#     remonter le seuil a chaque heure. Et l'echantillon doit avoir grossi
+#     depuis le pas precedent, sinon la meme mesure ferait marcher le reglage
+#     jusqu'a sa borne, heure apres heure.
 #
 # Une decision n'est qu'un reglage : elle se defait depuis l'application.
 learning_enabled: true
