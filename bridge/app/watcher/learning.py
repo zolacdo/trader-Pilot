@@ -318,7 +318,8 @@ async def _adjust_threshold(
         return None
 
     bande = fantome.overall if baisser else reel.overall
-    if bande.trades <= config.threshold_last_sample:
+    compteur = "threshold_down_sample" if baisser else "threshold_up_sample"
+    if bande.trades <= getattr(config, compteur):
         # Un pas doit etre paye d'un denouement neuf. Sinon la meme mesure
         # ferait marcher le seuil jusqu'a sa borne, heure apres heure.
         return None
@@ -329,9 +330,7 @@ async def _adjust_threshold(
         # Borne absente, ou seuil deja contre sa borne : rien a ecrire.
         return None
 
-    await update_config(
-        session, {"minimum_score": valeur, "threshold_last_sample": bande.trades}
-    )
+    await update_config(session, {"minimum_score": valeur, compteur: bande.trades})
     return Decision(
         key="minimum_score",
         kind="threshold",

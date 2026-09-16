@@ -99,6 +99,46 @@ async def test_un_denouement_neuf_autorise_un_nouveau_pas(session) -> None:
     assert apres.minimum_score == pytest.approx(68.0)
 
 
+async def test_les_deux_sens_comptent_leur_preuve_separement(session) -> None:
+    """Deux populations, deux compteurs : sinon l'une bloque l'autre.
+
+    Une baisse justifiee par dix fantomes ne doit pas empecher une hausse
+    justifiee par dix vraies pertes : ce sont des mesures distinctes, et un
+    compteur commun ferait passer l'une pour la repetition de l'autre.
+    """
+    for index in range(10):
+        await _fantome(session, result_r=1.5, index=index)
+    baisse = await learning.review(session, WatcherConfig())
+    assert [d.kind for d in baisse] == ["threshold"]
+
+    # La bande fantome retombe sous la bande morte : sans cela les deux sens
+    # se declencheraient ensemble et la regle de contradiction s'appliquerait,
+    # ce qui masquerait ce que ce test cherche a voir.
+    for index in range(13):
+        await _fantome(session, result_r=-1.0, index=50 + index)
+
+    # Dix vraies pertes, preuve neuve et de l'autre cote.
+    for index in range(10):
+        await repository.add_signal(
+            session,
+            make_signal(
+                symbol="REELUSD",
+                broker_symbol="REELUSD",
+                direction=Direction.BUY if index % 2 else Direction.SELL,
+                entry_type=EntryType.MARKET if index % 2 else EntryType.STOP,
+                status=WatcherStatus.SL_HIT,
+                result_r=-1.0,
+                created_at=utcnow(),
+            ),
+        )
+    config = await load_config(session, refresh=True)
+    hausse = await learning.review(session, config)
+
+    assert [d.kind for d in hausse] == ["threshold"]
+    apres = await load_config(session, refresh=True)
+    assert apres.minimum_score == pytest.approx(70.0), "69 puis +1 : retour a 70"
+
+
 async def test_un_pouvoir_discriminant_marginal_ne_deplace_aucun_poids(session) -> None:
     """Meme bande morte pour les poids : 0,02 d'ecart ne prouve rien."""
     from tests.test_poids_autoregles import FIABLE, TROMPEUR, _breakdown

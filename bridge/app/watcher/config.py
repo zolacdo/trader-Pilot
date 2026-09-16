@@ -174,7 +174,13 @@ class WatcherConfig:
     # si la mesure a grossi depuis : sans cela, dix operations rentables
     # feraient descendre le seuil d'un point TOUTES LES HEURES jusqu'a la
     # borne, soit cinq pas payes d'une seule et meme mesure.
-    threshold_last_sample: int = 0
+    #
+    # Un compteur par SENS, car les deux se mesurent sur des populations
+    # distinctes : la baisse sur la bande fantome, la hausse sur le publie. Un
+    # compteur commun ferait passer l'une pour la repetition de l'autre et
+    # bloquerait une preuve pourtant neuve.
+    threshold_down_sample: int = 0
+    threshold_up_sample: int = 0
     weights_last_sample: int = 0
 
     @property
