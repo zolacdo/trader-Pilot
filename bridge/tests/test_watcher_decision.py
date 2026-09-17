@@ -291,6 +291,76 @@ class TestRiskManager:
         assert decision.verdict in (RiskVerdict.WAIT, RiskVerdict.REJECTED)
         assert any("spread" in reason.lower() for reason in decision.reasons)
 
+    def _avec_biais(self, context: MarketContext, bias) -> MarketContext:
+        """Attache une vue multi-unites au biais voulu.
+
+        Le harnais construit des contextes SANS vue : ``context.bias`` y valait
+        donc toujours NEUTRAL, et le biais n'etait eprouve par aucun test.
+        """
+        from app.services.technical_analysis.multi_timeframe import MultiTimeframeView
+
+        context.view = MultiTimeframeView(symbol=context.symbol, profile="default", bias=bias)
+        return context
+
+    def test_un_marche_sans_direction_est_mis_en_attente(
+        self, config: WatcherConfig
+    ) -> None:
+        """Un declencheur sans tendance derriere lui est du bruit.
+
+        Mesure du 17/09/2026 sur les six signaux reels denoues : les deux
+        seuls qui n'ont JAMAIS bouge d'un tick en notre faveur (excursion
+        favorable 0,00 R) sont exactement les deux dont le biais etait
+        NEUTRAL. Les quatre a biais directionnel ont tous avance d'au moins
+        0,51 R. L'un des deux -- USDJPY achete -- avait meme un journalier
+        baissier.
+
+        Le biais n'etait qu'un contributeur a une moyenne ponderee : un
+        ``market_structure``, une ``volatility`` et des ``indicators`` forts
+        pouvaient l'outvoter et publier a 71,6. Une moyenne ne sait pas dire
+        « ceci est disqualifiant » -- il faut une barriere.
+        """
+        from app.models.intelligence import TrendState
+
+        context = self._avec_biais(make_context(), TrendState.NEUTRAL)
+
+        decision = self._evaluer(context, config)
+
+        assert decision.verdict is not RiskVerdict.APPROVED
+        assert any("direction" in reason.lower() for reason in decision.reasons)
+
+    def test_un_marche_directionnel_n_est_pas_retenu_par_cette_barriere(
+        self, config: WatcherConfig
+    ) -> None:
+        """Elle ne doit refuser que l'absence de direction, rien d'autre."""
+        from app.models.intelligence import TrendState
+
+        context = self._avec_biais(make_context(), TrendState.BULLISH)
+
+        decision = self._evaluer(context, config)
+
+        assert not any(
+            "aucune direction" in reason.lower() for reason in decision.reasons
+        )
+
+    def test_une_vue_absente_ne_declenche_pas_la_barriere(
+        self, config: WatcherConfig
+    ) -> None:
+        """On refuse une absence de direction MESUREE, pas une absence de mesure.
+
+        Sans vue multi-unites, le critere correspondant est indisponible et la
+        couverture s'en charge deja. Confondre les deux ferait refuser pour
+        « pas de direction » ce qui n'a simplement pas ete mesure -- le meme
+        principe que le « -- » qui n'est jamais zero ailleurs.
+        """
+        context = make_context()
+        assert context.view is None
+
+        decision = self._evaluer(context, config)
+
+        assert not any(
+            "aucune direction" in reason.lower() for reason in decision.reasons
+        )
+
     def test_un_type_d_entree_ecarte_est_refuse(self, config: WatcherConfig) -> None:
         """Une decision de l'apprentissage doit changer quelque chose.
 

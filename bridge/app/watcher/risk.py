@@ -17,6 +17,7 @@ from typing import Any
 
 from app.models.core import as_utc, utcnow
 from app.models.enums import Direction
+from app.models.intelligence import TrendState
 from app.watcher.analysis.context import MarketContext
 from app.watcher.config import WatcherConfig
 from app.watcher.levels import TradeLevels
@@ -102,6 +103,29 @@ def evaluate(
         rejections.append(f"Donnees trop anciennes : {context.quality.detail}")
     if context.primary is None or not context.primary.usable:
         rejections.append("Analyse technique inexploitable sur cet instrument.")
+
+    # --- direction du marche ------------------------------------------------
+    # Le biais n'etait qu'un contributeur a une moyenne ponderee : un
+    # ``market_structure``, une ``volatility`` et des ``indicators`` forts
+    # pouvaient l'outvoter et publier un trade directionnel dans un marche qui
+    # n'allait nulle part. Une moyenne ne sait pas dire « ceci est
+    # disqualifiant » -- il faut une barriere.
+    #
+    # Mesure du 17/09/2026 sur les six signaux reels denoues : les deux seuls
+    # qui n'ont JAMAIS bouge d'un tick en notre faveur (excursion favorable
+    # 0,00 R) sont exactement les deux dont le biais etait NEUTRAL. Les quatre
+    # a biais directionnel ont tous avance d'au moins 0,51 R. L'un des deux --
+    # USDJPY achete -- avait meme un journalier baissier.
+    #
+    # C'est une absence de direction MESUREE, jamais une absence de mesure :
+    # sans vue multi-unites le critere correspondant est indisponible et la
+    # couverture s'en charge deja. Confondre les deux ferait refuser pour
+    # « pas de direction » ce qui n'a simplement pas ete mesure.
+    if context.view is not None and context.bias is TrendState.NEUTRAL:
+        waits.append(
+            "Aucune direction de marche : les unites de temps ne s'accordent sur "
+            "rien, et un declencheur sans tendance derriere lui est du bruit."
+        )
 
     # --- qualite du setup ---------------------------------------------------
     if levels is None or not levels.valid:
