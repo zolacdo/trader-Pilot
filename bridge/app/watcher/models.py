@@ -26,7 +26,19 @@ from app.models.enums import Direction
 # sur position entiere. Les signaux d'une version anterieure portent donc des
 # resultats calcules autrement, et l'apprentissage doit les ignorer -- sinon il
 # apprend sur des -1 R pleins qui n'ont jamais correspondu au compte.
-STRATEGY_VERSION = "market_watcher_v1.1"
+#
+# Passee a v1.2 le 17/09/2026 : deux barrieres refusent desormais ce qu'une
+# moyenne ponderee laissait passer -- l'absence de direction sur D1/H4, et
+# l'absence de confirmation d'entree. Ce n'est plus la meme population, et les
+# deux bandes de l'apprentissage en dependent.
+#
+# Sans ce passage, la bande fantome restait un melange : 12 fantomes nes avant
+# les barrieres a -6,40 R noyaient les 3 qui les franchissent a +1,62 R, pour
+# une moyenne de -0,32 R. La boucle ne pouvait donc jamais baisser le seuil,
+# alors que les seuls fantomes qu'elle peut encore produire gagnent. La bande
+# reelle a le meme defaut en sens inverse : relever le seuil sur des pertes
+# issues de signaux a biais neutre punirait une faute deja corrigee.
+STRATEGY_VERSION = "market_watcher_v1.2"
 
 
 class WatcherDecision(StrEnum):
