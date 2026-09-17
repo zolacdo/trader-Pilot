@@ -366,14 +366,29 @@ class PositionManager:
             return
         volume = round_to_step(trade.volume * percentage / 100.0, symbol.volume_step)
         if volume < symbol.volume_min - 1e-9:
+            # On ne ferme rien. Fermer tout « a la place » renoncait a la
+            # suite du mouvement au moment precis ou le setup venait de
+            # donner raison -- et la mesure du 17/09/2026 sur les 41 signaux
+            # denoues dit que la totalite du profit vient des cinq qui
+            # depassent 2,5 R, les quatorze autres faisant -1,07 R ensemble.
+            #
+            # A 0,01 lot le cas est systematique, puisque 0,004 n'existe pas :
+            # la strategie 40/30/30 se reduisait a « sortir a TP1 ». Constate
+            # le 16/09/2026 sur la position 35, fermee pour -0,49 $ une minute
+            # cinquante apres son ouverture, le prix etant revenu entre le
+            # declenchement et l'execution.
+            #
+            # Le but d'un partiel est de reduire le risque : le break even que
+            # ``_handle_tp_hit`` applique juste apres l'atteint tout aussi
+            # bien, en mettant le stop a l'entree, sans rien abandonner.
             result.add(
                 ManagementAction(
                     "close_partial",
                     trade.ticket,
-                    f"Volume partiel {volume} sous le minimum broker : fermeture totale a la place",
+                    f"Volume partiel {volume} sous le minimum broker "
+                    f"({symbol.volume_min}) : position gardee entiere, le stop la protege",
                 )
             )
-            await self._close(session, trade, None, reason, result)
             return
         if volume >= trade.volume - 1e-9:
             await self._close(session, trade, None, reason, result)
