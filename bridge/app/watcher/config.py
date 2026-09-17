@@ -102,6 +102,13 @@ class WatcherConfig:
     after_news_minutes: int = 15
     critical_news_minutes: int = 30
     block_extreme_volatility: bool = True
+    # L'unite de confirmation du profil doit donner son feu vert avant toute
+    # entree. Mesure du 17/09/2026 sur les 41 premiers signaux denoues :
+    # ENTRY_CONFIRMATION 19 signaux a +10,14 R et 68 % de gagnants, WAIT 22
+    # signaux a -11,69 R et 23 % de gagnants. C'est le critere le plus
+    # discriminant du systeme, et il n'etait qu'un contributeur a une moyenne
+    # ponderee -- qu'un market_structure fort pouvait outvoter.
+    require_entry_confirmation: bool = True
 
     # --- qualite des donnees (CDC3 section 66) ---
     # Plancher de tolerance sur l'age de la derniere bougie. La tolerance
@@ -231,6 +238,7 @@ class WatcherConfig:
             "afterNewsMinutes": self.after_news_minutes,
             "criticalNewsMinutes": self.critical_news_minutes,
             "blockExtremeVolatility": self.block_extreme_volatility,
+            "requireEntryConfirmation": self.require_entry_confirmation,
             "maxDataAgeSeconds": self.max_data_age_seconds,
             "minimumCandles": self.minimum_candles,
             "cooldownMinutes": self.cooldown_minutes,

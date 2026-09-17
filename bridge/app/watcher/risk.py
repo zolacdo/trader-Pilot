@@ -18,6 +18,11 @@ from typing import Any
 from app.models.core import as_utc, utcnow
 from app.models.enums import Direction
 from app.models.intelligence import TrendState
+from app.services.technical_analysis.multi_timeframe import (
+    STATE_ENTRY_CONFIRMATION,
+    STATE_NO_DATA,
+    TimeframeRole,
+)
 from app.watcher.analysis.context import MarketContext
 from app.watcher.config import WatcherConfig
 from app.watcher.levels import TradeLevels
@@ -80,6 +85,59 @@ def _entree_ecartee(levels: TradeLevels, config: WatcherConfig) -> bool:
     return valeur in {str(item).upper() for item in config.disabled_entry_types or []}
 
 
+def _confirmation_manquante(context: MarketContext, config: WatcherConfig) -> str | None:
+    """Motif d'attente si l'unite de confirmation ne donne pas son feu vert.
+
+    Mesure du 17/09/2026 sur les 41 premiers signaux denoues -- c'est la
+    separation la plus nette de tout le jeu de donnees :
+
+        ENTRY_CONFIRMATION  19 signaux  excursion 1,37  +10,14 R  68 % gagnants
+        WAIT                22 signaux  excursion 0,76  -11,69 R  23 % gagnants
+
+    Elle tient dans les deux populations prises separement (publies +8,93 R
+    contre -4,92 R, fantomes +1,22 R contre -6,77 R), donc ce n'est pas
+    l'artefact de l'une d'elles.
+
+    Rien ne vient par-dessus, et c'est mesure aussi : exiger en plus un
+    declencheur M15 ramene les 19 signaux a 12 et le total a +4,24 R -- les 7
+    ecartes valaient +5,90 R. C'est coherent avec ``_confirmation_state``, qui
+    exige deja un biais D1+H4 directionnel, un momentum de confirmation dans
+    ce sens et une tendance qui ne s'y oppose pas : la confirmation est la
+    synthese des graphes, pas la lecture isolee du plus petit.
+
+    Une confirmation exige un feu vert, pas seulement l'absence de feu rouge :
+    une unite sans donnee fait donc attendre elle aussi. Mais le motif le dit
+    autrement, sinon une panne de donnees se lirait comme un marche hesitant
+    et personne n'irait chercher la panne.
+    """
+    if not config.require_entry_confirmation or context.view is None:
+        # Sans vue multi-unites, le critere n'est pas mesure : la couverture
+        # s'en charge deja. On refuse une absence MESUREE, pas une absence de
+        # mesure.
+        return None
+    verdicts = [
+        verdict
+        for verdict in context.view.verdicts
+        if verdict.role is TimeframeRole.CONFIRMATION
+    ]
+    if not verdicts:
+        return None
+    verdict = verdicts[0]
+    unite = verdict.timeframe.value
+    if verdict.state == STATE_ENTRY_CONFIRMATION:
+        return None
+    if verdict.state == STATE_NO_DATA:
+        return (
+            f"Confirmation d'entree non mesurable sur {unite} : "
+            "historique insuffisant sur cette unite de temps."
+        )
+    return (
+        f"Aucune confirmation d'entree sur {unite} : le momentum ne va pas "
+        "encore dans le sens du biais. Le setup reste surveille et sera "
+        "reevalue a la confirmation."
+    )
+
+
 def evaluate(
     context: MarketContext,
     direction: Direction,
@@ -126,6 +184,15 @@ def evaluate(
             "Aucune direction de marche : les unites de temps ne s'accordent sur "
             "rien, et un declencheur sans tendance derriere lui est du bruit."
         )
+
+    # La confirmation est redondante avec la barriere ci-dessus, qu'elle
+    # contient : ``_confirmation_state`` renvoie WAIT des que le biais est
+    # NEUTRAL. On garde les deux parce qu'elles ne disent pas la meme chose --
+    # l'une nomme l'absence de direction, l'autre l'absence de feu vert -- et
+    # parce que desarmer l'une par reglage ne doit pas desarmer l'autre.
+    confirmation = _confirmation_manquante(context, config)
+    if confirmation is not None:
+        waits.append(confirmation)
 
     # --- qualite du setup ---------------------------------------------------
     if levels is None or not levels.valid:

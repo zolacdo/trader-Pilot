@@ -253,6 +253,11 @@ class MarketContext:
             "price": self.price,
             "bias": self.bias.value,
             "timeframes": self.view.states() if self.view else {},
+            # L'etat dependant du role masque la tendance : une H1 baissiere en
+            # repli s'enregistrait en ``PULLBACK``. Sur les 41 premiers signaux
+            # denoues, 15 avaient ainsi leur tendance H1 perdue, et plus aucune
+            # requete ne pouvait mesurer l'accord des unites de temps.
+            "trends": self.view.trends() if self.view else {},
             "volatility": self.volatility.level.value,
             "volume": self.volume.detail,
             "priceAction": self.price_action.detail,

@@ -166,6 +166,16 @@ class MultiTimeframeView:
     def states(self) -> dict[str, str]:
         return {verdict.timeframe.value: verdict.state for verdict in self.verdicts}
 
+    def trends(self) -> dict[str, str]:
+        """Tendance de chaque unite, sans la lecture de son role.
+
+        ``states()`` renvoie l'etat dependant du role : une H1 baissiere en
+        repli s'y lit ``PULLBACK`` et sa tendance disparait. Les deux lectures
+        sont utiles et aucune ne remplace l'autre -- l'etat dit ce que l'unite
+        fait dans la strategie, la tendance dit ou elle va.
+        """
+        return {verdict.timeframe.value: verdict.trend.value for verdict in self.verdicts}
+
     def analysis_for(self, timeframe: Timeframe) -> TechnicalAnalysis | None:
         for verdict in self.verdicts:
             if verdict.timeframe is timeframe:
