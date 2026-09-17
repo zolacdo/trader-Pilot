@@ -377,7 +377,25 @@ def _a_gagne(signal: Any, trades: list[Any]) -> bool:
 
 
 def _real_pnl(signal: Any, trades: list[Any]) -> float | None:
-    """P&L de la position nee de ce signal, ou ``None`` si aucun ordre n'est parti."""
+    """P&L de la position nee de ce signal, ou ``None`` quand l'argent est muet.
+
+    ``None`` couvre deux cas qu'il ne faut surtout pas confondre avec un
+    resultat nul : aucun ordre n'est parti, et le broker n'a pas rendu le
+    montant realise.
+
+    Ce second cas est reel. ``_realized_profits`` ne lit l'historique des
+    deals que sur 48 heures et retombe sinon sur ``trade.profit`` -- une
+    colonne qui annonce +1,35 sur une position sortie a -1 R. Mesure du
+    17/09/2026 : quatre positions du 15/09 portent ``realized_pnl`` a 0,00
+    alors que l'une a fait +1,82 R.
+
+    Rendre 0,0 dans ce cas faisait conclure ``0.0 > 0``, donc « pas de
+    gain », et comptait nos meilleures operations parmi les steriles. C'est
+    l'inverse de l'invariant que ``_a_gagne`` revendique -- son erreur ne doit
+    pouvoir que rendre le ban plus prudent -- et c'est la meme faute que le
+    zero affiche a la place d'un « -- » : une mesure absente n'est pas une
+    mesure nulle.
+    """
     created = as_utc(signal.created_at)
     for trade in trades:
         if trade.symbol != signal.broker_symbol or trade.direction is not signal.direction:
@@ -385,7 +403,15 @@ def _real_pnl(signal: Any, trades: list[Any]) -> float | None:
         opened = as_utc(trade.opened_at)
         if created is not None and opened is not None and opened < created:
             continue
-        return float(trade.realized_pnl or 0.0)
+        montant = trade.realized_pnl
+        if montant is None:
+            return None
+        if float(montant) == 0.0 and float(getattr(trade, "r_multiple", 0.0) or 0.0) != 0.0:
+            # Le broker s'est tu sur une position qui a pourtant bouge : c'est
+            # une mesure manquante, pas un equilibre. Le resultat suivi en R
+            # prendra le relais, et lui est fiable.
+            return None
+        return float(montant)
     return None
 
 

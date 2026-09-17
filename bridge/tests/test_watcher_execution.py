@@ -194,6 +194,7 @@ class TestChaineComplete:
         config.send_startup_message = False
         config.minimum_score = 1.0
         config.minimum_rr = 0.1
+        config.require_entry_confirmation = False  # on mesure la chaine, pas l.entree
         config.auto_trade = True
 
         outcome = await watcher.analyse(session, market, "XAUUSD", "XAUUSD", config)

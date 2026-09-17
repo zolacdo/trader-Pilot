@@ -149,6 +149,50 @@ async def test_une_position_reelle_gagnante_empeche_le_bannissement(session) -> 
     assert _bannissements(await learning.review(session, WatcherConfig())) == []
 
 
+async def test_un_gain_dont_le_broker_n_a_pas_rendu_le_montant_reste_un_gain(session) -> None:
+    """Un zero n'est pas un equilibre mesure : c'est une mesure absente.
+
+    ``_realized_profits`` ne lit l'historique des deals que sur 48 heures et
+    retombe sinon sur ``trade.profit``. Quand le realise des fermetures
+    partielles echappe a cette fenetre, ``realized_pnl`` reste a 0,00 sur une
+    position pourtant gagnante. Mesure du 17/09/2026 : les trades 27, 28, 30
+    et 31 sont exactement dans ce cas, dont un a +1,82 R.
+
+    ``_a_gagne`` en concluait ``0.0 > 0``, donc « pas de gain ». Le
+    bannissement comptait donc nos meilleures operations parmi les steriles --
+    l'inverse exact de l'invariant que son propre docstring revendique, a
+    savoir que son erreur ne peut que rendre le ban plus prudent.
+    """
+    from app.models.enums import Direction, ExecutionMode, PositionState
+    from app.models.trading import TradeRecord
+
+    for index in range(10):
+        # La dixieme a gagne 1,82 R au suivi.
+        await _denoue(
+            session,
+            "BREAKUSD",
+            EntryType.BREAKOUT,
+            result_r=1.82 if index == 9 else -1.0,
+        )
+        if index == 9:
+            session.add(
+                TradeRecord(
+                    ticket=80000,
+                    symbol="BREAKUSD",
+                    direction=Direction.BUY,
+                    state=PositionState.CLOSED,
+                    execution_mode=ExecutionMode.MT5_DEMO,
+                    # Le broker n'a pas rendu le montant : ce zero ne dit rien.
+                    realized_pnl=0.0,
+                    r_multiple=1.82,
+                    opened_at=utcnow(),
+                )
+            )
+            await session.flush()
+
+    assert _bannissements(await learning.review(session, WatcherConfig())) == []
+
+
 async def test_un_seul_gain_suffit_a_ne_rien_ecarter(session) -> None:
     """Une clef qui a gagne une fois n'est pas sterile."""
     for _ in range(9):

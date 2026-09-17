@@ -63,6 +63,12 @@ def config() -> WatcherConfig:
     settings.minimum_rr = 0.1
     settings.shadow_enabled = True
     settings.shadow_score = 1.0
+    # Ces tests eprouvent la mecanique du fantome, pas le critere d'entree. Un
+    # fantome ne nait que si tout est approuve, confirmation comprise -- et
+    # les bougies du simulateur ne dependent que du symbole et de
+    # l'horodatage ABSOLU, donc la confirmation tombe ou non selon l'heure a
+    # laquelle la suite tourne. La barriere a ses propres tests ailleurs.
+    settings.require_entry_confirmation = False
     return settings
 
 

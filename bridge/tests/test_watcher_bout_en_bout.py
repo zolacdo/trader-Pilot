@@ -121,6 +121,7 @@ class TestAnalyseComplete:
         """
         config.minimum_score = 1.0
         config.minimum_rr = 0.1
+        config.require_entry_confirmation = False  # on mesure la chaine, pas l.entree
         outcome = await watcher.analyse(session, market, SYMBOL, SYMBOL, config)
         assert outcome.decision.is_tradable, outcome.detail
         assert outcome.signal is not None
@@ -138,6 +139,7 @@ class TestAnalyseComplete:
     ) -> None:
         config.minimum_score = 1.0
         config.minimum_rr = 0.1
+        config.require_entry_confirmation = False  # on mesure la chaine, pas l.entree
         outcome = await watcher.analyse(session, market, SYMBOL, SYMBOL, config)
         assert outcome.signal is not None
         assert outcome.signal.strategy_version == STRATEGY_VERSION
@@ -154,6 +156,7 @@ class TestAnalyseComplete:
     ) -> None:
         config.minimum_score = 1.0
         config.minimum_rr = 0.1
+        config.require_entry_confirmation = False  # on mesure la chaine, pas l.entree
         outcome = await watcher.analyse(session, market, SYMBOL, SYMBOL, config)
         signal = outcome.signal
         assert signal is not None
@@ -173,6 +176,7 @@ class TestAnalyseComplete:
     ) -> None:
         config.minimum_score = 1.0
         config.minimum_rr = 0.1
+        config.require_entry_confirmation = False  # on mesure la chaine, pas l.entree
         config.dry_run = True
         outcome = await watcher.analyse(session, market, SYMBOL, SYMBOL, config)
         assert outcome.signal is not None, "le signal est bien calcule et enregistre"
@@ -191,6 +195,7 @@ class TestAnalyseComplete:
         """Le second tour ne doit pas republier le meme signal (CDC3 section 31)."""
         config.minimum_score = 1.0
         config.minimum_rr = 0.1
+        config.require_entry_confirmation = False  # on mesure la chaine, pas l.entree
         first = await watcher.analyse(session, market, SYMBOL, SYMBOL, config)
         assert first.published is True
 
@@ -253,6 +258,7 @@ class TestFraicheur:
         """Verification de bout en bout du correctif : les donnees passent."""
         config.minimum_score = 1.0
         config.minimum_rr = 0.1
+        config.require_entry_confirmation = False  # on mesure la chaine, pas l.entree
         outcome = await watcher.analyse(session, market, SYMBOL, SYMBOL, config)
         assert outcome.context is not None
         assert outcome.context.quality.fresh is True
