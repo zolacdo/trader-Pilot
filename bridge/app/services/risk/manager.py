@@ -172,6 +172,29 @@ def _parse_hhmm(value: str, fallback: time) -> time:
         return fallback
 
 
+def _reduction_seule_en_cause(
+    *,
+    lot: LotCalculation,
+    quality: QualityMultiplier | None,
+    configured_risk_percent: float,
+    balance: float,
+) -> bool:
+    """La reduction est-elle la SEULE raison du volume trop petit ?
+
+    Meme question verifiable que celle de ``_explain_volume_failure`` : au
+    risque que l'utilisateur a configure, le lot minimum serait-il acceptable ?
+    Si oui, le compte n'est pas trop petit -- c'est le multiplicateur qui a
+    ferme la porte, et une exposition reduite n'a jamais voulu dire aucune
+    exposition.
+    """
+    if lot.cause != CAUSE_BELOW_VOLUME_MIN or lot.minimum_lot_loss is None:
+        return False
+    if balance <= 0 or quality is None or not quality.applied:
+        return False
+    part = lot.minimum_lot_loss / balance * 100.0
+    return part <= configured_risk_percent + 1e-9
+
+
 def _explain_volume_failure(
     *,
     lot: LotCalculation,
@@ -587,6 +610,48 @@ class RiskManager:
             risk_percent=risk_percent,
             max_lot=effective.max_lot,
         )
+        if not lot.ok and _reduction_seule_en_cause(
+            lot=lot,
+            quality=quality,
+            configured_risk_percent=effective.risk_percent,
+            balance=context.balance,
+        ):
+            # Reduire une taille ne doit jamais revenir a interdire la
+            # position. Le multiplicateur existe pour diminuer l'exposition,
+            # pas pour l'annuler -- et sur un petit compte il produisait
+            # l'inverse : le lot reduit tombait sous le minimum du courtier et
+            # le signal etait refuse entierement.
+            #
+            # Mesure du 18/09/2026 : trois refus INVALID_VOLUME dont un de
+            # huit minutes, le plus penalisant etant ``series_perdantes``
+            # (0,50) -- atteint des DEUX pertes consecutives. Apres deux
+            # pertes, un petit compte cessait donc de trader au moment precis
+            # ou le systeme croyait seulement lever le pied.
+            #
+            # On reprend au risque configure, ce qui donne au moins le lot
+            # minimum. Il coute par construction moins que ce que
+            # l'utilisateur a autorise -- c'est la condition verifiee
+            # ci-dessus -- et le garde-fou ``effective_risk`` reste derriere.
+            lot = await calculate_lot(
+                service=service,
+                symbol=symbol_info,
+                direction=signal.direction,
+                entry=entry_price,
+                stop_loss=stop_loss,
+                balance=context.balance,
+                risk_percent=effective.risk_percent,
+                max_lot=effective.max_lot,
+            )
+            if lot.ok and lot.volume is not None:
+                checks.append(
+                    RiskCheck(
+                        "risk_multiplier_floor",
+                        True,
+                        "Taille reduite sous le minimum du courtier : lot minimum "
+                        f"retenu au risque configure ({effective.risk_percent:.2f}%).",
+                    )
+                )
+
         if not lot.ok or lot.volume is None:
             motif = _explain_volume_failure(
                 lot=lot,
