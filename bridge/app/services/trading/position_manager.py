@@ -422,7 +422,7 @@ class PositionManager:
             # qu'un repli. Sans cette ligne, le trade restait a 0,00 et
             # n'alimentait aucune limite de risque.
             realized = await self._realized_profits()
-            trade.realized_pnl = realized.get(trade.ticket, trade.profit)
+            trade.realized_pnl = self._resultat_realise(trade, realized)
         else:
             trade.state = PositionState.PARTIALLY_CLOSED
         await trade_repo.save_trade(session, trade)
@@ -818,7 +818,7 @@ class PositionManager:
                 trade.close_reason = trade.close_reason or "fermee cote broker"
                 # Le resultat definitif vient de l'historique des deals ; le
                 # profit flottant n'est qu'un repli lorsqu'il est indisponible.
-                trade.realized_pnl = realized.get(trade.ticket, trade.profit)
+                trade.realized_pnl = self._resultat_realise(trade, realized)
                 await trade_repo.save_trade(session, trade)
                 closed.append(trade)
                 event_bus.publish(
@@ -897,6 +897,35 @@ class PositionManager:
                 remaining_volume=trade.volume,
                 trade_id=trade.id,
             )
+
+    @staticmethod
+    def _resultat_realise(trade: TradeRecord, realized: dict[int, float]) -> float:
+        """Resultat definitif d'une position, avec le flottant en repli.
+
+        ``realized.get(ticket, trade.profit)`` ne suffisait pas : l'historique
+        des deals est lu AVANT la detection des fermetures, et le courtier
+        publie le deal de sortie avec un temps de retard sur la disparition de
+        la position. Le ticket etait donc bien present dans la somme, mais
+        avec le seul deal d'entree -- profit nul. ``get`` renvoyait ce zero
+        stocke et le repli ne pouvait jamais jouer.
+
+        Constate le 18/09/2026 sur la position 44 : BTCUSDm sorti au stop,
+        ``profit`` a -3,91 et ``r_multiple`` a -1,00, mais ``realized_pnl``
+        inscrit a 0,00 -- alors que la perte du jour etait bien de 3,91 $.
+        ``statistics/service.py`` comptait donc cette perte pleine comme un
+        trade a l'equilibre, hors du taux de reussite et du profit factor.
+
+        Une position fermee qui portait un flottant non nul ne peut pas avoir
+        realise exactement zero. Un chiffre approche vaut mieux qu'un zero
+        faux. En revanche un zero sans flottant est une vraie mesure, et il
+        survit : on ne fabrique rien.
+        """
+        montant = realized.get(trade.ticket)
+        if montant is None:
+            return float(trade.profit or 0.0)
+        if montant == 0.0 and trade.profit:
+            return float(trade.profit)
+        return float(montant)
 
     async def _realized_profits(self, hours: int = 48) -> dict[int, float]:
         """Resultat net par position, lu dans l'historique des deals du broker."""
