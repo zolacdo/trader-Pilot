@@ -82,6 +82,14 @@ class Signal(SQLModel, table=True):
     risk_reward: float | None = Field(default=None)
     expires_at: datetime | None = Field(default=None)
     reviewed_at: datetime | None = Field(default=None)
+
+    # Issue d'un signal seulement observe (canal en mode OBSERVE), mesuree sur
+    # les bougies reelles. Sans elles, ``OBSERVED`` etait un aller sans
+    # retour : le canal se taisait et n'accumulait aucune preuve permettant
+    # d'en sortir. ``None`` signifie « pas encore denoue », jamais « nul ».
+    observed_result_r: float | None = Field(default=None)
+    observed_closed_at: datetime | None = Field(default=None)
+
     updated_at: datetime = Field(default_factory=utcnow)
 
 

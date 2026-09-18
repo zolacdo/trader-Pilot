@@ -35,6 +35,7 @@ from app.services.intelligence.cycle import (
 )
 from app.services.learning import tuner
 from app.services.market_data.engine import MarketDataEngine
+from app.services.trading import observation_tracker
 from app.services.trading.engine import trading_engine
 
 logger = get_logger(__name__)
@@ -353,6 +354,14 @@ class IntelligenceScheduler:
                 if marche is not None:
                     async with session_scope() as session:
                         await shadow_tracker.advance_open_trades(
+                            session, MarketDataEngine(marche)
+                        )
+                    # Meme raison pour les canaux en mode observation : sans
+                    # issue mesuree, OBSERVE etait un aller sans retour. Le
+                    # canal se taisait et n'accumulait jamais la preuve
+                    # permettant de le rouvrir.
+                    async with session_scope() as session:
+                        await observation_tracker.advance_observed_signals(
                             session, MarketDataEngine(marche)
                         )
 
