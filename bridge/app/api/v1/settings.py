@@ -54,6 +54,7 @@ def _risk_payload(settings: RiskSettings) -> dict[str, Any]:
         "requireStopLoss": settings.require_stop_loss,
         "requireTakeProfit": settings.require_take_profit,
         "minRiskReward": settings.min_risk_reward,
+        "maxTp1RiskRatio": settings.max_tp1_risk_ratio,
         "minConfidence": settings.min_confidence,
         "maxConsecutiveLosses": settings.max_consecutive_losses,
         "pauseAfterMaxLosses": settings.pause_after_max_losses,

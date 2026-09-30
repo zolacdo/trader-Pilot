@@ -148,6 +148,7 @@ class RiskSettingsRequest(BaseModel):
     require_stop_loss: bool | None = Field(default=None, alias="requireStopLoss")
     require_take_profit: bool | None = Field(default=None, alias="requireTakeProfit")
     min_risk_reward: float | None = Field(default=None, alias="minRiskReward", ge=0, le=100)
+    max_tp1_risk_ratio: float | None = Field(default=None, alias="maxTp1RiskRatio", ge=0, le=100)
     min_confidence: float | None = Field(default=None, alias="minConfidence", ge=0, le=1)
     max_consecutive_losses: int | None = Field(default=None, alias="maxConsecutiveLosses", ge=0, le=50)
     pause_after_max_losses: bool | None = Field(default=None, alias="pauseAfterMaxLosses")

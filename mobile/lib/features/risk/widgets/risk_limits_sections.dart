@@ -220,6 +220,14 @@ class RiskLimitsSections extends StatelessWidget {
               onChanged: (num? value) => controller.set('minRiskReward', value),
             ),
             RiskNumberField(
+              label: 'Distance maximale de TP1 (en R)',
+              description: 'Refuse un signal dont le premier objectif est plus loin que ce '
+                  'multiple du risque : son stop est trop serré et part au bruit. 1,2 conseillé, '
+                  'vide pour désactiver.',
+              value: draft.number('maxTp1RiskRatio'),
+              onChanged: (num? value) => controller.set('maxTp1RiskRatio', value),
+            ),
+            RiskNumberField(
               label: 'Confiance minimum',
               description: 'Score attribué au signal lors de son interprétation, entre 0 et 1. '
                   'En dessous, le signal est refusé.',

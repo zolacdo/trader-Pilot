@@ -171,6 +171,10 @@ class RiskSettings(SQLModel, table=True):
     require_stop_loss: bool = Field(default=True)
     require_take_profit: bool = Field(default=False)
     min_risk_reward: float | None = Field(default=None)
+    # Distance maximale de TP1, en multiples du risque. Rejeu du 30/09/2026 sur
+    # 46 trades : au-dela de 1,2 R, 8 sur 10 allaient au stop sans toucher
+    # TP1 -- un stop trop serre pour les objectifs du signal. NULL desactive.
+    max_tp1_risk_ratio: float | None = Field(default=None)
     min_confidence: float = Field(default=0.85)
 
     # --- protections comportementales ---

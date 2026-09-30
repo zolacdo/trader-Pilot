@@ -54,6 +54,7 @@ class EffectiveSettings:
     require_take_profit: bool
     min_confidence: float
     min_risk_reward: float | None
+    max_tp1_risk_ratio: float | None
     allowed_symbols: list[str]
     multi_tp_strategy: MultiTpStrategy
     split_ratios: list[float]
@@ -89,6 +90,7 @@ def resolve_settings(settings: RiskSettings, channel: ChannelSettings | None) ->
         ),
         min_confidence=pick(channel.min_confidence if channel else None, settings.min_confidence),
         min_risk_reward=settings.min_risk_reward,
+        max_tp1_risk_ratio=settings.max_tp1_risk_ratio,
         allowed_symbols=allowed,
         multi_tp_strategy=pick(channel.multi_tp_strategy if channel else None, settings.multi_tp_strategy),
         split_ratios=list(settings.split_ratios or [40.0, 30.0, 30.0]),
@@ -509,6 +511,24 @@ class RiskManager:
                 )
         ok("risk_reward", f"{risk_reward:.2f}" if risk_reward is not None else "non calculable")
 
+        # Un TP1 lointain dit que le stop est serre pour ce que le signal
+        # vise : le bruit l'atteint avant que le mouvement ne parte. Rejeu du
+        # 30/09/2026 : 8 stops directs sur 10 au-dela de 1,2 R, 2 sur 11 sous
+        # 0,7 R.
+        tp1_ratio = self._tp1_ratio(signal, entry_price)
+        if (
+            effective.max_tp1_risk_ratio is not None
+            and tp1_ratio is not None
+            and tp1_ratio > effective.max_tp1_risk_ratio
+        ):
+            return fail(
+                RejectionReason.RR_TOO_LOW,
+                f"TP1 a {tp1_ratio:.2f} R de l'entree, au-dela du maximum "
+                f"{effective.max_tp1_risk_ratio:.2f} R : stop trop serre pour l'objectif",
+                "tp1_distance",
+            )
+        ok("tp1_distance", f"{tp1_ratio:.2f} R" if tp1_ratio is not None else "non calculable")
+
         # ------------------------------------------------------------------
         # 9. Limites journalieres et drawdown
         #
@@ -761,6 +781,16 @@ class RiskManager:
         if symbol.trade_stops_level <= 0:
             return abs(entry - stop) > 0
         return points_between(entry, stop, symbol) >= symbol.trade_stops_level
+
+    @staticmethod
+    def _tp1_ratio(signal: ParsedSignal, entry_price: float) -> float | None:
+        """Distance de TP1 a l'entree, en multiples du risque."""
+        if signal.stop_loss is None or not signal.take_profits:
+            return None
+        risk = abs(entry_price - signal.stop_loss)
+        if risk <= 0:
+            return None
+        return abs(signal.take_profits[0] - entry_price) / risk
 
     @staticmethod
     def _risk_reward(
