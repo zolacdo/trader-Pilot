@@ -166,6 +166,11 @@ class TrailingMode(StrEnum):
     # centieme de celui de BTCUSD. Aucun nombre de points ne peut convenir aux
     # deux, l'ATR si.
     ATR_BASED = "ATR_BASED"
+    # Le stop monte d'un objectif a chaque objectif franchi : TP1 atteint, il
+    # passe a l'entree ; TP2 atteint, il passe sur TP1 ; et ainsi de suite.
+    # Rien n'est ferme en route, la position entiere court jusqu'au dernier
+    # objectif ou jusqu'au palier qu'elle vient de quitter.
+    TP_LADDER = "TP_LADDER"
 
 
 class PositionState(StrEnum):

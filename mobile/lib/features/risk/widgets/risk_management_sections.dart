@@ -93,6 +93,12 @@ class RiskManagementSections extends StatelessWidget {
           'réglage garde son sens sur l\'or comme sur l\'EURUSD, là où un nombre de points '
           'convient à l\'un et pas à l\'autre.',
     ),
+    RiskOption<String>(
+      value: 'TP_LADDER',
+      label: 'En escalier sur les objectifs',
+      description: 'Rien n\'est fermé en route. TP1 atteint : stop à l\'entrée. TP2 atteint : '
+          'stop sur TP1. Et ainsi de suite jusqu\'au dernier objectif.',
+    ),
   ];
 
   static const List<RiskOption<String>> _atrTimeframes = <RiskOption<String>>[

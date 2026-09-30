@@ -514,6 +514,9 @@ class PositionManager:
         price = tick.bid if trade.direction is Direction.BUY else tick.ask
         mode = settings.trailing_mode
 
+        if mode is TrailingMode.TP_LADDER:
+            await self._auto_escalier(session, trade, settings, symbol, price, result)
+            return
         if mode is TrailingMode.AFTER_TP1 and trade.tp_index < 1:
             return
         if mode is TrailingMode.R_BASED and trade.initial_stop_loss is not None:
@@ -551,6 +554,42 @@ class PositionManager:
         if not _respects_stop_distance(price, candidate, symbol):
             return
         await self._set_stop_loss(session, trade, candidate, "trailing stop", result)
+
+    async def _auto_escalier(
+        self,
+        session: AsyncSession,
+        trade: TradeRecord,
+        settings: RiskSettings,
+        symbol: SymbolInfo,
+        price: float,
+        result: ManagementResult,
+    ) -> None:
+        """Stop pose sur l'objectif precedant le dernier objectif franchi.
+
+        TP1 franchi : le stop va a l'entree (plus l'offset du break even).
+        TP2 franchi : le stop va sur TP1. TPn franchi : sur TPn-1. Le stop ne
+        recule jamais, et aucune tranche n'est fermee en route.
+        """
+        cibles = [c for c in (trade.take_profit_targets or []) if c is not None]
+        niveau = min(trade.tp_index, len(cibles))
+        if niveau < 1:
+            return
+        if niveau == 1:
+            candidate = break_even_price(trade, symbol, settings.break_even_offset_points)
+        else:
+            candidate = round(float(cibles[niveau - 2]), symbol.digits)
+        if not _stop_is_better(trade, candidate):
+            return
+        if not _respects_stop_distance(price, candidate, symbol):
+            return
+        await self._set_stop_loss(
+            session,
+            trade,
+            candidate,
+            "stop a l'entree sur TP1" if niveau == 1 else f"stop sur TP{niveau - 1}",
+            result,
+            mark_break_even=True,
+        )
 
     @staticmethod
     def _trailing_step(settings: RiskSettings, symbol: SymbolInfo, distance: float) -> float:
