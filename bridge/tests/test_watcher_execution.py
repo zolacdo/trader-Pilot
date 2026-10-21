@@ -88,7 +88,7 @@ class TestTransmission:
         self, session: AsyncSession, espion: MoteurEspion
     ) -> None:
         """Le moteur doit voir exactement ce que voit le lecteur du canal."""
-        config = WatcherConfig(auto_trade=True)
+        config = WatcherConfig(auto_trade=True, trade_only_validated=False)
 
         rapport = await execution.execute_signal(session, TEXTE, config, message_id=77)
 
@@ -101,7 +101,7 @@ class TestTransmission:
         self, session: AsyncSession, espion: MoteurEspion
     ) -> None:
         """Sans lui, une capture tardive par l'ecoute ouvrirait une 2e position."""
-        config = WatcherConfig(auto_trade=True)
+        config = WatcherConfig(auto_trade=True, trade_only_validated=False)
 
         await execution.execute_signal(session, TEXTE, config, message_id=77)
 
@@ -111,7 +111,7 @@ class TestTransmission:
         self, session: AsyncSession, espion: MoteurEspion
     ) -> None:
         """Un canal injoignable ne doit pas faire rater la position."""
-        config = WatcherConfig(auto_trade=True)
+        config = WatcherConfig(auto_trade=True, trade_only_validated=False)
 
         rapport = await execution.execute_signal(session, TEXTE, config, message_id=None)
 
@@ -125,7 +125,7 @@ class TestTransmission:
         refus = ProcessOutcome(stage="rejected", executed=False, detail="Risque trop eleve")
         monkeypatch.setattr(execution, "trading_engine", MoteurEspion(refus))
 
-        rapport = await execution.execute_signal(session, TEXTE, WatcherConfig(auto_trade=True))
+        rapport = await execution.execute_signal(session, TEXTE, WatcherConfig(auto_trade=True, trade_only_validated=False))
 
         assert rapport.attempted is True
         assert rapport.executed is False
@@ -144,7 +144,7 @@ class TestRobustesse:
 
         monkeypatch.setattr(execution, "trading_engine", MoteurEnPanne())
 
-        rapport = await execution.execute_signal(session, TEXTE, WatcherConfig(auto_trade=True))
+        rapport = await execution.execute_signal(session, TEXTE, WatcherConfig(auto_trade=True, trade_only_validated=False))
 
         assert rapport.stage == "error"
         assert rapport.executed is False
@@ -196,6 +196,7 @@ class TestChaineComplete:
         config.minimum_rr = 0.1
         config.require_entry_confirmation = False  # on mesure la chaine, pas l.entree
         config.auto_trade = True
+        config.trade_only_validated = False  # idem : la barriere a sa propre suite
 
         outcome = await watcher.analyse(session, market, "XAUUSD", "XAUUSD", config)
 

@@ -3,6 +3,7 @@
     python -m app.backtest download              # met l'historique MT5 en cache
     python -m app.backtest run --jobs 2          # rejoue et juge
     python -m app.backtest report <dossier>      # rejuge un rejeu deja fait
+    python -m app.backtest apply [dossier]       # n'autorise que ce qui est valide
 
 Les resultats vont dans ``bridge/data/backtest/results/<horodatage>`` :
 ``trades.csv`` (un signal par ligne), ``report.txt`` et ``report.json``.
@@ -123,7 +124,18 @@ def main(argv: list[str] | None = None) -> int:
     rep = sub.add_parser("report", help="rejuge un rejeu deja fait")
     rep.add_argument("folder", type=Path)
 
+    app_ = sub.add_parser(
+        "apply", help="ne laisse trader le watcher que sur les instruments valides"
+    )
+    app_.add_argument("folder", type=Path, nargs="?", help="defaut : le dernier rejeu")
+
     args = parser.parse_args(argv)
+    if args.command == "apply":
+        folder = args.folder or _latest_results()
+        with (folder / "trades.csv").open(encoding="utf-8") as handle:
+            rows = [_typed(row) for row in csv.DictReader(handle)]
+        print(asyncio.run(_apply(validated_instruments(rows))))
+        return 0
     if args.command == "download":
         for line in history.download(args.symbols, FRAMES):
             print(line, flush=True)
@@ -154,6 +166,72 @@ def main(argv: list[str] | None = None) -> int:
     print(_write(folder, rows, meta))
     print(f"\nResultats : {folder}")
     return 0
+
+
+def _latest_results() -> Path:
+    folders = sorted(p for p in (history.CACHE_DIR / "results").iterdir() if p.is_dir())
+    if not folders:
+        raise SystemExit("Aucun rejeu : lancer d'abord « run ».")
+    return folders[-1]
+
+
+def canonical(broker_symbol: str) -> str:
+    """Nom du watcher pour un nom Exness : USTECm -> NAS100, EURUSDm -> EURUSD."""
+    name = broker_symbol[:-1] if broker_symbol.endswith("m") else broker_symbol
+    return BROKER_TO_WATCHER.get(name, name)
+
+
+BROKER_TO_WATCHER = {"USTEC": "NAS100"}
+# Plancher du budget de perte en demo : en dessous, trois pertes ordinaires
+# couperaient un instrument avant que la demo ait pu dire quoi que ce soit.
+MIN_BUDGET_R = 3.0
+
+
+def validated_instruments(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Instruments qui gagnent en apprentissage ET en validation, gestion reelle."""
+    report = judge(rows, "LADDER")
+    out: dict[str, dict[str, Any]] = {}
+    for broker, halves in report["groups"]["instrument"].items():
+        learn, valid = halves["learning"], halves["validation"]
+        if f"instrument = {broker}" not in report["validated"]:
+            continue
+        out[canonical(broker)] = {
+            "learning": learn,
+            "validation": valid,
+            # La pire baisse vue en validation : si la demo fait pire, ce
+            # n'est plus le meme comportement que celui qui a ete valide.
+            "budget_r": round(max(MIN_BUDGET_R, valid.max_drawdown_r), 2),
+        }
+    return out
+
+
+async def _apply(validated: dict[str, dict[str, Any]]) -> str:
+    from app.database.session import session_scope
+    from app.watcher.config import update_config
+
+    changes = {
+        "trade_only_validated": True,
+        "validated_symbols": sorted(validated),
+        "validated_since": datetime.now(UTC).isoformat(timespec="seconds"),
+        "validation_budget_r": {k: v["budget_r"] for k, v in validated.items()},
+        # Rien de valide : le watcher reste un simple publicateur.
+        "auto_trade": bool(validated),
+    }
+    async with session_scope() as session:
+        await update_config(session, changes)
+    if not validated:
+        return (
+            "Aucun instrument ne gagne a la fois en apprentissage et en validation.\n"
+            "watcher.auto_trade = false : le watcher analyse et publie, il ne trade pas."
+        )
+    lines = ["Instruments autorises a trader (gestion en escalier) :"]
+    for name, data in sorted(validated.items()):
+        lines.append(
+            f"  {name:<8} validation {data['validation'].line()}\n"
+            f"  {'':<8} frein a -{data['budget_r']} R de perte en demo"
+        )
+    lines.append("watcher.auto_trade = true pour ces seuls instruments.")
+    return "\n".join(lines)
 
 
 def _typed(row: dict[str, str]) -> dict[str, Any]:

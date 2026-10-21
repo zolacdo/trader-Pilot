@@ -411,6 +411,8 @@ class WatcherEngine:
             config,
             telegram_channel_id=target.identifier if target else None,
             message_id=result.message_id if result.sent else None,
+            symbol=signal.symbol,
+            broker_symbol=signal.broker_symbol,
         )
 
         if result.sent:

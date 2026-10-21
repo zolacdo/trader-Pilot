@@ -140,6 +140,18 @@ class WatcherConfig:
     # le RiskManager puis MetaTrader. Mettre ce reglage a False rend au
     # watcher son role de simple publicateur.
     auto_trade: bool = True
+    # Barriere du backtest (``python -m app.backtest apply``) : seuls les
+    # instruments qui gagnent sur l'historique, en apprentissage ET en
+    # validation, passent des ordres. Mesure du 21/10/2026 : sans elle, un
+    # mois de demo a coute 207 $ a -0,20 R par trade, sans un seul runner
+    # depuis le 21/09.
+    trade_only_validated: bool = True
+    validated_symbols: list[str] = field(default_factory=list)
+    validated_since: str = ""
+    # Perte cumulee en R toleree en demo par instrument valide, depuis
+    # ``validated_since``. Au-dela, la demo contredit le backtest : l'instrument
+    # cesse de trader de lui-meme.
+    validation_budget_r: dict[str, float] = field(default_factory=dict)
 
     # --- IA (CDC3 sections 20 et 73) ---
     ai_enabled: bool = True
@@ -253,6 +265,10 @@ class WatcherConfig:
             "sendNewsAlerts": self.send_news_alerts,
             "sendSignalUpdates": self.send_signal_updates,
             "sendStartupMessage": self.send_startup_message,
+            "tradeOnlyValidated": self.trade_only_validated,
+            "validatedSymbols": list(self.validated_symbols),
+            "validatedSince": self.validated_since,
+            "validationBudgetR": dict(self.validation_budget_r),
             "aiEnabled": self.ai_enabled,
             "aiMinScore": self.ai_min_score,
             "weights": dict(self.weights),

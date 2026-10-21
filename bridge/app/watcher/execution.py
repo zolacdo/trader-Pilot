@@ -12,10 +12,12 @@ le RiskManager et MetaTrader voient rigoureusement ce que voit le lecteur du
 canal. Aucun chemin d'execution parallele n'est cree -- c'est le meme que pour
 un signal recu d'un canal tiers.
 
-Trois garde-fous, dans cet ordre :
+Quatre garde-fous, dans cet ordre :
 
 * ``auto_trade`` a ``False`` laisse le watcher en simple publicateur ;
 * ``dry_run`` interdit l'execution comme il interdit deja la publication ;
+* la barriere du backtest : seul un instrument valide sur l'historique passe,
+  et il cesse de passer si la demo perd plus que le backtest ne l'annoncait ;
 * l'identifiant du message publie sert de cle d'idempotence. Si l'ecoute
   finissait un jour par rendre ces messages, le moteur les reconnaitrait comme
   deja traites au lieu d'ouvrir une seconde position.
@@ -24,12 +26,15 @@ Trois garde-fous, dans cet ordre :
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.logging_config import get_logger
-from app.models.enums import EventLevel
+from app.models.enums import EventLevel, PositionState
+from app.models.trading import TradeRecord
 from app.repositories import channel_repo
 from app.services import journal
 from app.services.trading import trading_engine
@@ -62,12 +67,68 @@ def _skip(detail: str) -> ExecutionReport:
     return ExecutionReport(stage="skipped", detail=detail)
 
 
+async def demo_result_r(
+    session: AsyncSession, broker_symbol: str, channel_id: int | None, since: datetime
+) -> float:
+    """Somme des R realises par le watcher sur cet instrument depuis ``since``."""
+    query = select(func.coalesce(func.sum(TradeRecord.r_multiple), 0.0)).where(
+        TradeRecord.symbol == broker_symbol,
+        TradeRecord.state == PositionState.CLOSED,
+        TradeRecord.closed_at >= since,
+    )
+    if channel_id is not None:
+        query = query.where(TradeRecord.channel_id == channel_id)
+    return float((await session.execute(query)).scalar_one())
+
+
+async def _barriere_backtest(
+    session: AsyncSession,
+    config: WatcherConfig,
+    symbol: str | None,
+    broker_symbol: str | None,
+    channel_id: int | None,
+) -> str | None:
+    """Motif de refus si l'instrument n'a pas gagne au backtest, ou plus en demo.
+
+    Le frein compare la demo a ce que le backtest a laisse prevoir : une perte
+    cumulee au-dela du budget dit que l'historique ne se repete pas, et
+    l'instrument cesse de trader sans attendre que quelqu'un le remarque.
+    """
+    if not config.trade_only_validated:
+        return None
+    canonical = (symbol or "").strip().upper()
+    if canonical not in config.validated_symbols:
+        return f"{canonical or 'Instrument'} n'a pas gagne au backtest : aucun ordre."
+    budget = config.validation_budget_r.get(canonical)
+    since = _date(config.validated_since)
+    if budget is None or since is None or not broker_symbol:
+        return None
+    realise = await demo_result_r(session, broker_symbol, channel_id, since)
+    if realise <= -abs(budget):
+        return (
+            f"Frein : {canonical} a perdu {realise:+.2f} R en demo depuis sa validation, "
+            f"au-dela du budget de {abs(budget):.2f} R prevu par le backtest."
+        )
+    return None
+
+
+def _date(value: str) -> datetime | None:
+    try:
+        moment = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    # Les heures en base sont en UTC naif.
+    return moment.astimezone(UTC).replace(tzinfo=None) if moment.tzinfo else moment
+
+
 async def execute_signal(
     session: AsyncSession,
     text: str,
     config: WatcherConfig,
     telegram_channel_id: int | None = None,
     message_id: int | None = None,
+    symbol: str | None = None,
+    broker_symbol: str | None = None,
 ) -> ExecutionReport:
     """Remet un signal publie au moteur de trading. Ne leve jamais.
 
@@ -88,6 +149,20 @@ async def execute_signal(
     channel = None
     if telegram_channel_id is not None:
         channel = await channel_repo.get_by_telegram_id(session, int(telegram_channel_id))
+
+    refus = await _barriere_backtest(
+        session, config, symbol, broker_symbol, channel.id if channel else None
+    )
+    if refus is not None:
+        await journal.record(
+            session,
+            event="watcher_not_executed",
+            message=f"Signal du watcher non execute : {refus}",
+            level=EventLevel.INFO,
+            category="trading",
+            channel_id=channel.id if channel else None,
+        )
+        return _skip(refus)
 
     try:
         outcome = await trading_engine.handle_message(
